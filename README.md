@@ -90,6 +90,31 @@ python collision_avoidance_v4.py
 - Total cost: 20 minutes (no route change needed)
 - All collisions successfully avoided! 🎉
 
+## 📸 Results & Analysis
+
+### Main Results Dashboard
+![Collision Avoidance Results](collision_avoidance_v4.png)
+
+The system successfully coordinates 3 ships with different speeds:
+- **Left panel**: Ship paths with departure times
+- **Right panels**: Time-space diagram, speed comparison, and summary
+
+### Path Comparison Over Time
+![Path Comparison](path_comparison_v4.png)
+
+Shows Ship C's position at different time points (t=0, 10, 15, 20, 30, 40):
+- Blue/Green circles: Safety zones around Ships A & B
+- Red paths: Ship C's original vs optimized route
+- Result: No route change needed, only time adjustment
+
+### Collision Detail Analysis
+![Collision Detail](collision_detail_v4.png)
+
+Detailed view of the avoided collision:
+- Red X: Where collision would have occurred at t=15.75
+- Distance: Ships would have been only ~40 pixels apart (under 0.5nm safety limit)
+- Solution: 20-minute delay moves Ship C out of collision timeframe
+
 ## 🛠️ Technical Architecture
 
 ### Core Components
@@ -156,12 +181,21 @@ awesome-ship-navigator/
 
 ## 📝 Key Insights
 
+### Why Time Delay Over Route Change?
+
+The optimizer tested **34 different solutions** and found:
+1. **20-min delay only**: Total cost = 20.0 minutes ✅ (Selected)
+2. **22-min delay + 0.18nm detour**: Total cost = 22.9 minutes
+3. **Other combinations**: All cost more than 20 minutes
+
+**Conclusion**: For short collision windows (2.5 minutes), waiting is more efficient than detouring.
+
 The system intelligently chooses between:
 - **Time delay**: Wait before departure
 - **Route change**: Take a longer path
 - **Combined approach**: Both delay and detour
 
-In many cases, a simple time delay is more efficient than route changes, as demonstrated in the example where 20-minute delay costs less than any detour option.
+This demonstrates the power of unified cost function - converting all factors to time enables fair comparison.
 
 ## 🤝 Contributing
 
