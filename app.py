@@ -817,6 +817,80 @@ async def get_realtime_with_routes(db: Session = Depends(get_db)):
     return combined_data
 
 
+# Chatbot endpoints
+@app.post("/api/chatbot/voice")
+async def process_voice(db: Session = Depends(get_db)):
+    """Process voice input and return response"""
+    from fastapi import File, UploadFile
+    import base64
+    import random
+
+    # For now, return mock response
+    # In production, you would use speech recognition here
+    responses = [
+        {
+            "transcript": "현재 선박 상태를 확인해줘",
+            "response": "포항 구룡포항에 현재 3척의 선박이 운항 중입니다. 모든 선박이 정상 운항 중이며, 기상 상태는 맑고 파도는 0.5m입니다.",
+            "tools": []
+        },
+        {
+            "transcript": "날씨 정보 알려줘",
+            "response": "현재 구룡포항 날씨는 맑음, 기온 18도, 풍속 3m/s, 파고 0.5m입니다. 선박 운항에 적합한 날씨입니다.",
+            "tools": []
+        },
+        {
+            "transcript": "경로 계획이 필요해",
+            "response": "경로 계획을 시작합니다. 출발지와 목적지를 지정해주세요.",
+            "tools": [
+                {"id": "route_plan", "name": "경로 계획", "icon": "🗺️", "action": "plan_route"}
+            ]
+        }
+    ]
+
+    selected = random.choice(responses)
+    return selected
+
+
+@app.post("/api/chatbot/text")
+async def process_text(request: dict, db: Session = Depends(get_db)):
+    """Process text input and return response"""
+    message = request.get("message", "").lower()
+
+    # Simple keyword-based responses
+    if "선박" in message or "상태" in message:
+        ships = db.query(DBShip).limit(3).all()
+        ship_count = len(ships)
+        return {
+            "response": f"현재 {ship_count}척의 선박이 등록되어 있습니다. 모든 선박이 정상 운항 중입니다.",
+            "tools": []
+        }
+    elif "날씨" in message or "기상" in message:
+        weather = db.query(DBWeatherData).first()
+        if weather:
+            return {
+                "response": f"현재 날씨: 기온 {weather.temperature}°C, 풍속 {weather.wind_speed}m/s, 습도 {weather.humidity}%",
+                "tools": []
+            }
+        else:
+            return {
+                "response": "현재 날씨: 맑음, 기온 18°C, 풍속 3m/s, 파고 0.5m",
+                "tools": []
+            }
+    elif "경로" in message or "계획" in message:
+        return {
+            "response": "경로 계획을 도와드리겠습니다. 출발지와 목적지를 선택해주세요.",
+            "tools": [
+                {"id": "route_plan", "name": "경로 계획", "icon": "🗺️", "action": "plan_route"},
+                {"id": "view_map", "name": "지도 보기", "icon": "🗺️", "action": "view_map"}
+            ]
+        }
+    else:
+        return {
+            "response": "무엇을 도와드릴까요? 선박 상태, 날씨 정보, 경로 계획 등을 문의해주세요.",
+            "tools": []
+        }
+
+
 @app.get("/")
 async def root():
     """API root endpoint"""
@@ -837,6 +911,8 @@ async def root():
             "/api/eum/weather",
             "/api/eum/traffic/density",
             "/api/ships/realtime-with-routes",
+            "/api/chatbot/voice",
+            "/api/chatbot/text",
             "/docs"
         ]
     }

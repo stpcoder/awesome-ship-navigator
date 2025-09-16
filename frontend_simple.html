@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>선박 항로 최적화 시스템</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f0f2f5;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .main-container {
+            display: flex;
+            gap: 1rem;
+            padding: 1rem;
+            height: calc(100vh - 70px);
+        }
+
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .panel h3 {
+            margin: 0 0 1rem 0;
+            font-size: 1.1rem;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 0.5rem;
+        }
+
+        .left-panel, .right-panel {
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .center-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .map-container {
+            flex: 1;
+            position: relative;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        #mapCanvas {
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin: 0.25rem;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5a67d8;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #ffc107;
+            color: #212529;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        input[type="text"], input[type="number"], select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 0.25rem 0;
+        }
+
+        .ship-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .ship-item {
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .ship-item:hover {
+            background: #e9ecef;
+        }
+
+        .ship-item.selected {
+            background: #667eea;
+            color: white;
+        }
+
+        .time-controller {
+            background: white;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .map-legend {
+            position: absolute;
+            bottom: 1rem;
+            right: 1rem;
+            background: white;
+            padding: 0.75rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin: 0.25rem 0;
+            font-size: 0.85rem;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        .map-click-indicator {
+            position: absolute;
+            top: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #667eea;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-weight: 600;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚢 선박 항로 최적화 시스템</h1>
+    </div>
+
+    <div class="main-container">
+        <div class="left-panel">
+            <div class="panel">
+                <h3>선박 정보</h3>
+                <div id="shipList" class="ship-list"></div>
+            </div>
+
+            <div class="panel">
+                <h3>센서 정보</h3>
+                <div id="sensorInfo"></div>
+            </div>
+        </div>
+
+        <div class="center-panel">
+            <div class="map-container">
+                <div id="mapClickIndicator" class="map-click-indicator" style="display: none;"></div>
+                <canvas id="mapCanvas"></canvas>
+                <div class="map-legend">
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #667eea;"></span>
+                        <span>수용 O (Flexible)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #ff9f43;"></span>
+                        <span>수용 X (Fixed)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #e74c3c;"></span>
+                        <span>계획된 경로</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #2ecc71;"></span>
+                        <span>선박 위치</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="time-controller">
+                <button id="playBtn" class="btn btn-success">▶ 재생</button>
+                <input type="range" id="timeSlider" min="0" max="180" value="0" style="flex: 1;">
+                <span id="timeDisplay">00:00</span>
+                <button id="resetBtn" class="btn btn-secondary">↺ 리셋</button>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="panel">
+                <h3>경로 계획</h3>
+                <div>
+                    <label>선박 선택:</label>
+                    <select id="shipSelect">
+                        <option value="">선박을 선택하세요</option>
+                    </select>
+                </div>
+                <div>
+                    <button id="setStartBtn" class="btn btn-secondary">출발점 설정</button>
+                    <button id="setGoalBtn" class="btn btn-secondary">도착점 설정</button>
+                </div>
+                <div id="routePoints" style="margin: 0.5rem 0; font-size: 0.85rem; color: #666;"></div>
+                <div>
+                    <label>출발 시간 (분 후):</label>
+                    <input type="number" id="departureTime" value="30" min="0" max="180">
+                </div>
+                <div>
+                    <label>시간 수용 모드:</label>
+                    <div>
+                        <label><input type="radio" name="acceptMode" value="flexible" checked> 수용 O (Flexible)</label>
+                        <label><input type="radio" name="acceptMode" value="fixed"> 수용 X (Fixed)</label>
+                    </div>
+                </div>
+                <button id="planRouteBtn" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">경로 계획</button>
+            </div>
+
+            <div class="panel">
+                <h3>경로 정보</h3>
+                <div id="routeInfo"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let ships = [];
+        let routes = [];
+        let realtimeData = [];
+        let currentTime = 0;
+        let isPlaying = false;
+        let mapClickMode = null;
+        let routePoints = { start: null, goal: null };
+        let plannedRoute = null;
+        let animationInterval = null;
+
+        // Initialize
+        async function init() {
+            await fetchShips();
+            await fetchSensorData();
+            await fetchRoutes();
+            setInterval(fetchRealtimeData, 5000);
+
+            setupEventListeners();
+            drawMap();
+        }
+
+        // Fetch data
+        async function fetchShips() {
+            try {
+                const response = await fetch(`${API_BASE}/api/eum/ships`);
+                ships = await response.json();
+                updateShipList();
+                updateShipSelect();
+            } catch (error) {
+                console.error('Failed to fetch ships:', error);
+            }
+        }
+
+        async function fetchSensorData() {
+            try {
+                const [cctvRes, lidarRes] = await Promise.all([
+                    fetch(`${API_BASE}/api/eum/cctv`),
+                    fetch(`${API_BASE}/api/eum/lidar`)
+                ]);
+                const cctv = await cctvRes.json();
+                const lidar = await lidarRes.json();
+
+                document.getElementById('sensorInfo').innerHTML = `
+                    <div>📹 CCTV: ${cctv.length}개</div>
+                    <div>📡 LiDAR: ${lidar.length}개</div>
+                `;
+            } catch (error) {
+                console.error('Failed to fetch sensor data:', error);
+            }
+        }
+
+        async function fetchRoutes() {
+            try {
+                const response = await fetch(`${API_BASE}/api/ships`);
+                routes = await response.json();
+                drawMap();
+            } catch (error) {
+                console.error('Failed to fetch routes:', error);
+            }
+        }
+
+        async function fetchRealtimeData() {
+            try {
+                const response = await fetch(`${API_BASE}/api/ships/realtime-with-routes`);
+                realtimeData = await response.json();
+                drawMap();
+            } catch (error) {
+                console.error('Failed to fetch realtime data:', error);
+            }
+        }
+
+        // UI Updates
+        function updateShipList() {
+            const listHtml = ships.slice(0, 10).map(ship => `
+                <div class="ship-item" data-id="${ship.shipId}">
+                    <strong>${ship.name}</strong><br>
+                    <small>${ship.shipId}<br>
+                    ${ship.type}</small>
+                </div>
+            `).join('');
+            document.getElementById('shipList').innerHTML = listHtml;
+        }
+
+        function updateShipSelect() {
+            const selectHtml = '<option value="">선박을 선택하세요</option>' +
+                ships.map(ship => `<option value="${ship.shipId}">${ship.name} (${ship.shipId})</option>`).join('');
+            document.getElementById('shipSelect').innerHTML = selectHtml;
+        }
+
+        // Map drawing
+        function drawMap() {
+            const canvas = document.getElementById('mapCanvas');
+            const ctx = canvas.getContext('2d');
+
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+
+            const scaleX = canvas.width / 2000;
+            const scaleY = canvas.height / 1400;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= 2000; x += 100) {
+                ctx.beginPath();
+                ctx.moveTo(x * scaleX, 0);
+                ctx.lineTo(x * scaleX, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= 1400; y += 100) {
+                ctx.beginPath();
+                ctx.moveTo(0, y * scaleY);
+                ctx.lineTo(canvas.width, y * scaleY);
+                ctx.stroke();
+            }
+
+            // Draw routes
+            routes.forEach(route => {
+                if (route.path_points && route.path_points.length > 0) {
+                    ctx.strokeStyle = route.optimization_mode === 'flexible' ? '#667eea' : '#ff9f43';
+                    ctx.lineWidth = 2;
+
+                    ctx.beginPath();
+                    route.path_points.forEach((point, index) => {
+                        const x = point[0] * scaleX;
+                        const y = point[1] * scaleY;
+                        if (index === 0) {
+                            ctx.moveTo(x, y);
+                        } else {
+                            ctx.lineTo(x, y);
+                        }
+                    });
+                    ctx.stroke();
+
+                    // Draw ship if within time
+                    if (currentTime >= route.departure_time && currentTime <= route.arrival_time) {
+                        const progress = (currentTime - route.departure_time) /
+                                       (route.arrival_time - route.departure_time);
+                        const pointIndex = Math.floor(progress * (route.path_points.length - 1));
+                        const point = route.path_points[pointIndex];
+
+                        ctx.fillStyle = '#2ecc71';
+                        ctx.beginPath();
+                        ctx.arc(point[0] * scaleX, point[1] * scaleY, 8, 0, 2 * Math.PI);
+                        ctx.fill();
+                    }
+                }
+            });
+
+            // Draw planned route
+            if (plannedRoute && plannedRoute.path_points) {
+                ctx.strokeStyle = '#e74c3c';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([5, 5]);
+
+                ctx.beginPath();
+                plannedRoute.path_points.forEach((point, index) => {
+                    const x = point[0] * scaleX;
+                    const y = point[1] * scaleY;
+                    if (index === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                });
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Draw route points
+            if (routePoints.start) {
+                ctx.fillStyle = '#2ecc71';
+                ctx.beginPath();
+                ctx.arc(routePoints.start[0] * scaleX, routePoints.start[1] * scaleY, 10, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('S', routePoints.start[0] * scaleX, routePoints.start[1] * scaleY);
+            }
+
+            if (routePoints.goal) {
+                ctx.fillStyle = '#e74c3c';
+                ctx.beginPath();
+                ctx.arc(routePoints.goal[0] * scaleX, routePoints.goal[1] * scaleY, 10, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('G', routePoints.goal[0] * scaleX, routePoints.goal[1] * scaleY);
+            }
+        }
+
+        // Event listeners
+        function setupEventListeners() {
+            // Map click
+            document.getElementById('mapCanvas').addEventListener('click', (e) => {
+                if (!mapClickMode) return;
+
+                const rect = e.target.getBoundingClientRect();
+                const x = ((e.clientX - rect.left) / rect.width) * 2000;
+                const y = ((e.clientY - rect.top) / rect.height) * 1400;
+
+                if (mapClickMode === 'start') {
+                    routePoints.start = [x, y];
+                } else if (mapClickMode === 'goal') {
+                    routePoints.goal = [x, y];
+                }
+
+                mapClickMode = null;
+                document.getElementById('mapClickIndicator').style.display = 'none';
+                updateRoutePointsDisplay();
+                drawMap();
+            });
+
+            // Set start/goal buttons
+            document.getElementById('setStartBtn').addEventListener('click', () => {
+                mapClickMode = 'start';
+                document.getElementById('mapClickIndicator').textContent = '출발점을 클릭하세요';
+                document.getElementById('mapClickIndicator').style.display = 'block';
+            });
+
+            document.getElementById('setGoalBtn').addEventListener('click', () => {
+                mapClickMode = 'goal';
+                document.getElementById('mapClickIndicator').textContent = '도착점을 클릭하세요';
+                document.getElementById('mapClickIndicator').style.display = 'block';
+            });
+
+            // Plan route button
+            document.getElementById('planRouteBtn').addEventListener('click', async () => {
+                const shipId = document.getElementById('shipSelect').value;
+                const departureTime = parseInt(document.getElementById('departureTime').value);
+                const acceptMode = document.querySelector('input[name="acceptMode"]:checked').value;
+
+                if (!shipId || !routePoints.start || !routePoints.goal) {
+                    alert('선박과 출발/도착 지점을 모두 설정해주세요');
+                    return;
+                }
+
+                try {
+                    // Plan route
+                    const planResponse = await fetch(`${API_BASE}/api/route/plan`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ship_id: shipId,
+                            start_position: routePoints.start,
+                            goal_position: routePoints.goal,
+                            departure_time: departureTime,
+                            speed_knots: 12.0
+                        })
+                    });
+
+                    plannedRoute = await planResponse.json();
+
+                    // Accept or reject
+                    const acceptResponse = await fetch(`${API_BASE}/api/route/accept`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ship_id: shipId,
+                            accept: acceptMode === 'flexible'
+                        })
+                    });
+
+                    const result = await acceptResponse.json();
+                    if (result.path_points) {
+                        plannedRoute = result;
+                    }
+
+                    updateRouteInfo();
+                    await fetchRoutes();
+                    alert(`경로 계획 완료! 모드: ${acceptMode === 'flexible' ? '수용 O' : '수용 X'}`);
+                } catch (error) {
+                    console.error('Failed to plan route:', error);
+                    alert('경로 계획 실패');
+                }
+            });
+
+            // Time controls
+            document.getElementById('playBtn').addEventListener('click', () => {
+                isPlaying = !isPlaying;
+                document.getElementById('playBtn').textContent = isPlaying ? '⏸ 일시정지' : '▶ 재생';
+                document.getElementById('playBtn').className = isPlaying ? 'btn btn-warning' : 'btn btn-success';
+
+                if (isPlaying) {
+                    animationInterval = setInterval(() => {
+                        currentTime = Math.min(currentTime + 1, 180);
+                        document.getElementById('timeSlider').value = currentTime;
+                        updateTimeDisplay();
+                        drawMap();
+                    }, 1000);
+                } else {
+                    clearInterval(animationInterval);
+                }
+            });
+
+            document.getElementById('timeSlider').addEventListener('input', (e) => {
+                currentTime = parseInt(e.target.value);
+                updateTimeDisplay();
+                drawMap();
+            });
+
+            document.getElementById('resetBtn').addEventListener('click', () => {
+                currentTime = 0;
+                document.getElementById('timeSlider').value = 0;
+                updateTimeDisplay();
+                drawMap();
+            });
+        }
+
+        function updateRoutePointsDisplay() {
+            let html = '';
+            if (routePoints.start) {
+                html += `출발: (${routePoints.start[0].toFixed(0)}, ${routePoints.start[1].toFixed(0)})<br>`;
+            }
+            if (routePoints.goal) {
+                html += `도착: (${routePoints.goal[0].toFixed(0)}, ${routePoints.goal[1].toFixed(0)})`;
+            }
+            document.getElementById('routePoints').innerHTML = html;
+        }
+
+        function updateRouteInfo() {
+            if (plannedRoute) {
+                document.getElementById('routeInfo').innerHTML = `
+                    <p>선박: ${plannedRoute.ship_id}</p>
+                    <p>출발: ${plannedRoute.recommended_departure?.toFixed(1)} 분</p>
+                    <p>도착: ${plannedRoute.arrival_time?.toFixed(1)} 분</p>
+                    <p>거리: ${plannedRoute.total_distance_nm?.toFixed(2)} nm</p>
+                    <p>최적화: ${plannedRoute.optimization_type}</p>
+                `;
+            }
+        }
+
+        function updateTimeDisplay() {
+            const hours = Math.floor(currentTime / 60);
+            const mins = Math.floor(currentTime % 60);
+            document.getElementById('timeDisplay').textContent =
+                `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+        }
+
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
