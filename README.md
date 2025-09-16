@@ -2,6 +2,57 @@
 
 Advanced Ship Navigation System with Collision Avoidance
 
+## 🚀 빠른 실행 가이드 (Quick Start Guide)
+
+### Backend 실행 방법
+```bash
+# 1. 터미널 열기
+# 2. 프로젝트 루트 디렉토리로 이동
+cd awesome-ship-navigator
+
+# 3. Python 가상환경 활성화 (이미 설치되어 있다면)
+source venv/bin/activate  # Mac/Linux
+# 또는
+venv\Scripts\activate  # Windows
+
+# 4. 가상환경이 없다면 생성
+python3 -m venv venv
+source venv/bin/activate
+
+# 5. 필수 패키지 설치 (처음 한 번만)
+pip install -r requirements.txt
+
+# 6. Backend 서버 실행
+python app.py
+
+# 서버가 http://localhost:8000 에서 실행됩니다
+# API 문서 확인: http://localhost:8000/docs
+```
+
+### Frontend 실행 방법
+```bash
+# 1. 새로운 터미널 창 열기
+# 2. frontend 디렉토리로 이동
+cd awesome-ship-navigator/frontend
+
+# 3. Node.js 패키지 설치 (처음 한 번만)
+npm install
+
+# 4. Frontend 개발 서버 실행
+npm start
+
+# 브라우저가 자동으로 http://localhost:3000 을 엽니다
+# 지도와 선박 관리 UI를 볼 수 있습니다
+```
+
+### 주요 기능
+- 🗺️ **실시간 선박 위치 모니터링**: EUM API 연동
+- 🎤 **음성 챗봇**: 한국어 음성 인식 지원
+- 📍 **경로 계획**: 충돌 회피 알고리즘 적용
+- ⏰ **두 가지 모드**:
+  - 수용 O (Flexible): 시스템 추천 시간
+  - 수용 X (Fixed): 사용자 지정 시간
+
 ## Overview
 
 A comprehensive ship navigation system that combines A* pathfinding with intelligent collision avoidance. The system optimizes both departure times and routes to prevent collisions while minimizing total travel time.
