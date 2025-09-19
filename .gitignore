@@ -58,3 +58,9 @@ logs
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Project specific
+chatbot_TODO.md
+current_requirements.txt
+*.backup
+convert_obstacles.js

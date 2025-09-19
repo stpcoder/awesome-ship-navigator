@@ -8,7 +8,7 @@ Advanced Ship Navigation System with Collision Avoidance
 ```bash
 # 1. 터미널 열기
 # 2. 프로젝트 루트 디렉토리로 이동
-cd awesome-ship-navigator
+cd awesome-ship-naivgator
 
 # 3. Python 가상환경 활성화 (이미 설치되어 있다면)
 source venv/bin/activate  # Mac/Linux
@@ -22,7 +22,11 @@ source venv/bin/activate
 # 5. 필수 패키지 설치 (처음 한 번만)
 pip install -r requirements.txt
 
-# 6. Backend 서버 실행
+# 6. 환경 변수 설정 (.env 파일 생성)
+cp .env.example .env
+# .env 파일을 열어서 필요한 API 키 설정
+
+# 7. Backend 서버 실행
 python app.py
 
 # 서버가 http://localhost:8000 에서 실행됩니다
@@ -33,7 +37,7 @@ python app.py
 ```bash
 # 1. 새로운 터미널 창 열기
 # 2. frontend 디렉토리로 이동
-cd awesome-ship-navigator/frontend
+cd awesome-ship-naivgator/frontend
 
 # 3. Node.js 패키지 설치 (처음 한 번만)
 npm install
@@ -77,7 +81,7 @@ A comprehensive ship navigation system that combines A* pathfinding with intelli
 ```bash
 # Clone the repository
 git clone https://github.com/stpcoder/awesome-ship-navigator.git
-cd awesome-ship-navigator
+cd awesome-ship-naivgator
 
 # Create virtual environment
 python3 -m venv venv

@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import './App.css';
 import MapView from './components/MapView';
+import MapViewReal from './components/MapViewReal';
 import ShipInfo from './components/ShipInfo';
 import SensorInfo from './components/SensorInfo';
 import RoutePlanner from './components/RoutePlanner';
 import TimeController from './components/TimeController';
 import ChatBot from './components/ChatBot';
+import obstaclesData from './data/obstacles_latlng.json';
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:8000';
@@ -24,6 +26,9 @@ function MainDashboard() {
   const [routePoints, setRoutePoints] = useState({ start: null, goal: null });
   const [showRealtimeShips, setShowRealtimeShips] = useState(false);
   const [showRoutes, setShowRoutes] = useState(true);
+  const [useRealMap, setUseRealMap] = useState(true); // Toggle for real map
+  const [shipMapClickHandler, setShipMapClickHandler] = useState(null);
+  const [isDarkMode, setIsDarkMode] = useState(false); // Dark mode state
 
   // Fetch initial data
   useEffect(() => {
@@ -31,6 +36,15 @@ function MainDashboard() {
     fetchSensorData();
     fetchRoutes();
   }, []);
+
+  // Toggle dark mode
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+  }, [isDarkMode]);
 
   // Fetch realtime data only when toggle is on
   useEffect(() => {
@@ -93,9 +107,13 @@ function MainDashboard() {
     }
   };
 
-  const handlePlanRoute = async (shipId, departureTime, acceptRecommendation) => {
-    if (!routePoints.start || !routePoints.goal) {
-      alert('출발점과 도착점을 지도에서 선택해주세요');
+  const handlePlanRoute = async (shipId, departureTime, acceptRecommendation, startPos, goalPos) => {
+    // Use provided positions from RoutePlanner instead of map click points
+    const start = startPos || routePoints.start;
+    const goal = goalPos || routePoints.goal;
+
+    if (!start || !goal) {
+      alert('출발점과 도착점이 설정되지 않았습니다.');
       return;
     }
 
@@ -106,8 +124,8 @@ function MainDashboard() {
       // Plan route using the single endpoint
       const planResponse = await axios.post(`${API_BASE}/api/route/plan`, {
         ship_id: shipId,
-        start_position: routePoints.start,
-        goal_position: routePoints.goal,
+        start_position: start,
+        goal_position: goal,
         departure_time: departureTime,
         speed_knots: 12.0
       });
@@ -143,10 +161,43 @@ function MainDashboard() {
     }
   };
 
+  const handleUpdatePositions = (shipId, positions) => {
+    // Update the ship positions in the ships array
+    setShips(prevShips => prevShips.map(ship =>
+      ship.shipId === shipId
+        ? { ...ship, ...positions }
+        : ship
+    ));
+
+    // Update selected ship if it's the one being updated
+    if (selectedShip?.shipId === shipId) {
+      setSelectedShip(prev => ({ ...prev, ...positions }));
+    }
+  };
+
+  const handleShipMapClickMode = (handler) => {
+    setShipMapClickHandler(() => handler);
+  };
+
+  const handleSensorSelect = (sensorType, sensorData) => {
+    // This function will be called when a sensor is selected from the dropdown
+    // You can add logic here to display the sensor on the map
+    console.log('Sensor selected:', sensorType, sensorData);
+    // TODO: Add marker to map at sensorData.lat, sensorData.lng
+  };
+
   return (
     <div className="App">
       <header className="App-header">
         <h1>🚢 선박 항로 최적화 시스템</h1>
+        <div
+          className={`theme-toggle ${isDarkMode ? 'dark' : ''}`}
+          onClick={() => setIsDarkMode(!isDarkMode)}
+        >
+          <div className="theme-toggle-slider">
+            {isDarkMode ? '🌙' : '☀️'}
+          </div>
+        </div>
         <Link to="/chatbot" style={{
           position: 'absolute',
           right: '20px',
@@ -167,24 +218,45 @@ function MainDashboard() {
             ships={ships}
             selectedShip={selectedShip}
             onSelectShip={setSelectedShip}
+            onUpdatePositions={handleUpdatePositions}
+            onMapClick={handleShipMapClickMode}
           />
 
-          <SensorInfo sensorData={sensorData} />
+          <SensorInfo
+            sensorData={sensorData}
+            onSensorSelect={handleSensorSelect}
+          />
         </div>
 
         <div className="center-panel">
-          <MapView
-            routes={routes}
-            realtimeData={realtimeData}
-            sensorData={sensorData}
-            currentTime={currentTime}
-            plannedRoute={plannedRoute}
-            onMapClick={handleMapClick}
-            mapClickMode={mapClickMode}
-            routePoints={routePoints}
-            showRealtimeShips={showRealtimeShips}
-            showRoutes={showRoutes}
-          />
+          {useRealMap ? (
+            <MapViewReal
+              ships={showRealtimeShips ? realtimeData : []}
+              routes={showRoutes ? routes : []}
+              selectedShip={selectedShip}
+              obstacles={obstaclesData} // Pass obstacle data
+              onSetStart={() => setMapClickMode('start')}
+              onSetGoal={() => setMapClickMode('goal')}
+              routePoints={routePoints}
+              plannedRoute={plannedRoute}
+              onMapClick={shipMapClickHandler}
+            />
+          ) : (
+            <MapView
+              routes={routes}
+              realtimeData={realtimeData}
+              sensorData={sensorData}
+              currentTime={currentTime}
+              plannedRoute={plannedRoute}
+              onMapClick={handleMapClick}
+              mapClickMode={mapClickMode}
+              routePoints={routePoints}
+              showRealtimeShips={showRealtimeShips}
+              showRoutes={showRoutes}
+              selectedShip={selectedShip}
+              ships={ships}
+            />
+          )}
 
           <TimeController
             currentTime={currentTime}
@@ -224,6 +296,21 @@ function MainDashboard() {
             }}>
               <input
                 type="checkbox"
+                checked={useRealMap}
+                onChange={(e) => setUseRealMap(e.target.checked)}
+                style={{ width: '20px', height: '20px' }}
+              />
+              <span style={{ fontWeight: '500' }}>🗺️ 실제 지도 사용</span>
+            </label>
+
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              cursor: 'pointer'
+            }}>
+              <input
+                type="checkbox"
                 checked={showRoutes}
                 onChange={(e) => setShowRoutes(e.target.checked)}
                 style={{ width: '20px', height: '20px' }}
@@ -236,10 +323,8 @@ function MainDashboard() {
         <div className="right-panel">
           <RoutePlanner
             ships={ships}
+            selectedShip={selectedShip}
             onPlanRoute={handlePlanRoute}
-            onSetStart={() => setMapClickMode('start')}
-            onSetGoal={() => setMapClickMode('goal')}
-            routePoints={routePoints}
           />
 
           <div className="route-info">

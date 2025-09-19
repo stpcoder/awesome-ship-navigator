@@ -89,6 +89,15 @@ class Ship(Base):
     breath = Column(Float)
     depth = Column(Float)
     gt = Column(Float)
+
+    # Fishing area coordinates
+    fishing_area_lat = Column(Float)
+    fishing_area_lng = Column(Float)
+
+    # Docking position coordinates
+    docking_lat = Column(Float)
+    docking_lng = Column(Float)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

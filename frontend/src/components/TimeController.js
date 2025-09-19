@@ -32,12 +32,13 @@ const TimeController = ({ currentTime, onTimeChange, isPlaying, onPlayPause }) =
       <button
         className={`btn ${isPlaying ? 'btn-warning' : 'btn-success'}`}
         onClick={onPlayPause}
+        style={{ minWidth: '100px' }}
       >
-        {isPlaying ? '⏸ 일시정지' : '▶ 재생'}
+        {isPlaying ? '일시정지' : '재생'}
       </button>
 
       <div className="time-slider">
-        <span style={{ minWidth: '50px' }}>0:00</span>
+        <span style={{ minWidth: '45px', fontSize: '0.9rem' }}>0:00</span>
         <input
           type="range"
           min="0"
@@ -46,18 +47,19 @@ const TimeController = ({ currentTime, onTimeChange, isPlaying, onPlayPause }) =
           onChange={(e) => onTimeChange(Number(e.target.value))}
           style={{ flex: 1 }}
         />
-        <span style={{ minWidth: '50px' }}>3:00</span>
+        <span style={{ minWidth: '45px', fontSize: '0.9rem' }}>3:00</span>
       </div>
 
       <div className="time-display">
-        현재 시간: {formatTime(currentTime)}
+        {formatTime(currentTime)}
       </div>
 
       <button
         className="btn btn-secondary"
         onClick={() => onTimeChange(0)}
+        style={{ minWidth: '80px' }}
       >
-        ↺ 리셋
+        리셋
       </button>
     </div>
   );

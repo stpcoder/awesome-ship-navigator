@@ -8,6 +8,9 @@ import json
 import numpy as np
 from shapely.geometry import Polygon
 from datetime import datetime
+import subprocess
+import os
+import sys
 
 from database import (
     get_db, ShipRoute as DBShipRoute, Ship as DBShip,
@@ -18,13 +21,15 @@ from database import (
 from models import (
     RouteRequest, RouteResponse, RouteAcceptance, RouteStatus, RouteSegment,
     ShipInfo, CCTVDevice, LiDARDevice, ShipRealtimeLocation, WeatherData,
-    ShipDensityGrid, ShipRoute as ShipRouteModel, ShipRealtimeWithRoute
+    ShipDensityGrid, ShipRoute as ShipRouteModel, ShipRealtimeWithRoute,
+    ShipPositionUpdate
 )
 from eum_api_client import EUMAPIClient
 from core_optimizer import (
     ShipRoute, CollisionChecker, PathAdjuster, RouteOptimizer,
     PIXEL_TO_NM
 )
+from chatbot_service import ChatbotService
 
 
 app = FastAPI(title="Ship Navigation Optimizer", version="1.0.0")
@@ -44,6 +49,7 @@ path_adjuster = None
 route_optimizer = None
 obstacles_polygons = []
 eum_client = None
+chatbot_service = None
 
 
 def load_obstacles_from_json(json_file='guryongpo_obstacles_drawn.json'):
@@ -62,7 +68,36 @@ def load_obstacles_from_json(json_file='guryongpo_obstacles_drawn.json'):
 @app.on_event("startup")
 async def startup_event():
     """Initialize optimization components on startup"""
-    global collision_checker, path_adjuster, route_optimizer, obstacles_polygons, eum_client
+    global collision_checker, path_adjuster, route_optimizer, obstacles_polygons, eum_client, chatbot_service
+
+    print("🚀 Starting Ship Navigation System...")
+
+    # Check if database needs initialization
+    db = next(get_db())
+    try:
+        ship_count = db.query(DBShip).count()
+        cctv_count = db.query(DBCCTVDevice).count()
+        lidar_count = db.query(DBLiDARDevice).count()
+
+        # If any table is empty, initialize all data
+        if ship_count == 0 or cctv_count == 0 or lidar_count == 0:
+            print("📊 Database is empty. Initializing with hardcoded data...")
+            # Run initialization script
+            result = subprocess.run([sys.executable, "init_all_data.py"], capture_output=True, text=True)
+            if result.returncode == 0:
+                print("✅ Database initialized successfully")
+                print(result.stdout)
+            else:
+                print(f"❌ Failed to initialize database: {result.stderr}")
+        else:
+            print(f"✅ Database already contains data:")
+            print(f"   - Ships: {ship_count}")
+            print(f"   - CCTV devices: {cctv_count}")
+            print(f"   - LiDAR devices: {lidar_count}")
+    except Exception as e:
+        print(f"❌ Error checking database: {e}")
+    finally:
+        db.close()
 
     # Load obstacles
     obstacles_polygons = load_obstacles_from_json()
@@ -79,14 +114,21 @@ async def startup_event():
     # Initialize EUM API client
     eum_client = EUMAPIClient()
 
-    # Fetch and store ship list on startup
-    await sync_ship_list()
+    # Initialize chatbot service
+    chatbot_service = ChatbotService()
 
-    print("Ship Navigation Optimizer initialized")
+    # Skip sync_ship_list since we're using hardcoded data now
+    # await sync_ship_list()
+
+    print("✅ Ship Navigation Optimizer initialized")
 
 
 async def sync_ship_list():
-    """Sync ship list from EUM API to database"""
+    """Sync ship list from EUM API to database (disabled - using hardcoded data)"""
+    # This function is now disabled since we're using hardcoded data
+    # Keep it for future use if we want to sync with real API
+    return
+
     global eum_client
     db = next(get_db())
 
@@ -464,7 +506,11 @@ async def get_eum_ships(db: Session = Depends(get_db)):
             gt=ship.gt or 0.0,
             sign="",
             rgDtm="",
-            dcDate=""
+            dcDate="",
+            fishingAreaLat=ship.fishing_area_lat,
+            fishingAreaLng=ship.fishing_area_lng,
+            dockingLat=ship.docking_lat,
+            dockingLng=ship.docking_lng
         ) for ship in ships
     ]
 
@@ -474,6 +520,31 @@ async def sync_ships_from_eum():
     """Manually trigger ship list sync from EUM API"""
     await sync_ship_list()
     return {"message": "Ship list synchronized successfully"}
+
+
+@app.put("/api/eum/ships/{ship_id}/positions")
+async def update_ship_positions(
+    ship_id: str,
+    positions: ShipPositionUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update fishing area and docking positions for a ship"""
+    ship = db.query(DBShip).filter(DBShip.ship_id == ship_id).first()
+    if not ship:
+        raise HTTPException(status_code=404, detail="Ship not found")
+
+    # Update fishing area if provided
+    if positions.fishingAreaLat is not None and positions.fishingAreaLng is not None:
+        ship.fishing_area_lat = positions.fishingAreaLat
+        ship.fishing_area_lng = positions.fishingAreaLng
+
+    # Update docking position if provided
+    if positions.dockingLat is not None and positions.dockingLng is not None:
+        ship.docking_lat = positions.dockingLat
+        ship.docking_lng = positions.dockingLng
+
+    db.commit()
+    return {"message": f"Positions updated for ship {ship_id}"}
 
 
 @app.get("/api/eum/cctv", response_model=List[CCTVDevice])
@@ -853,42 +924,43 @@ async def process_voice(db: Session = Depends(get_db)):
 
 @app.post("/api/chatbot/text")
 async def process_text(request: dict, db: Session = Depends(get_db)):
-    """Process text input and return response"""
-    message = request.get("message", "").lower()
+    """Process text input with GPT integration"""
+    global chatbot_service
 
-    # Simple keyword-based responses
-    if "선박" in message or "상태" in message:
-        ships = db.query(DBShip).limit(3).all()
-        ship_count = len(ships)
+    message = request.get("message", "")
+
+    if not chatbot_service:
+        # Fallback if service not initialized
         return {
-            "response": f"현재 {ship_count}척의 선박이 등록되어 있습니다. 모든 선박이 정상 운항 중입니다.",
-            "tools": []
+            "response": "챗봇 서비스를 초기화하는 중입니다. 잠시 후 다시 시도해주세요.",
+            "function": "unknown",
+            "parameters": {}
         }
-    elif "날씨" in message or "기상" in message:
+
+    # Process with ChatGPT
+    result = chatbot_service.process_text(message)
+
+    # Add database context for specific functions
+    if result["function"] == "show_weather":
         weather = db.query(DBWeatherData).first()
         if weather:
-            return {
-                "response": f"현재 날씨: 기온 {weather.temperature}°C, 풍속 {weather.wind_speed}m/s, 습도 {weather.humidity}%",
-                "tools": []
+            result["parameters"]["weather_data"] = {
+                "temperature": weather.temperature,
+                "wind_speed": weather.wind_speed,
+                "humidity": weather.humidity
             }
-        else:
-            return {
-                "response": "현재 날씨: 맑음, 기온 18°C, 풍속 3m/s, 파고 0.5m",
-                "tools": []
-            }
-    elif "경로" in message or "계획" in message:
-        return {
-            "response": "경로 계획을 도와드리겠습니다. 출발지와 목적지를 선택해주세요.",
-            "tools": [
-                {"id": "route_plan", "name": "경로 계획", "icon": "🗺️", "action": "plan_route"},
-                {"id": "view_map", "name": "지도 보기", "icon": "🗺️", "action": "view_map"}
-            ]
-        }
-    else:
-        return {
-            "response": "무엇을 도와드릴까요? 선박 상태, 날씨 정보, 경로 계획 등을 문의해주세요.",
-            "tools": []
-        }
+    elif result["function"] == "recommend_departure":
+        # Get current ship routes for context
+        active_routes = db.query(DBShipRoute).filter(
+            DBShipRoute.status.in_(['accepted', 'active'])
+        ).count()
+        result["parameters"]["active_ships"] = active_routes
+
+    return {
+        "response": result["message"],
+        "function": result["function"],
+        "parameters": result["parameters"]
+    }
 
 
 @app.get("/")

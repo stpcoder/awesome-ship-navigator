@@ -12,7 +12,9 @@ const MapView = ({
   mapClickMode,
   routePoints,
   showRealtimeShips,
-  showRoutes
+  showRoutes,
+  selectedShip,
+  ships
 }) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -35,7 +37,7 @@ const MapView = ({
 
   useEffect(() => {
     drawMap();
-  }, [routes, realtimeData, currentTime, plannedRoute, routePoints, dimensions, showRealtimeShips, showRoutes]);
+  }, [routes, realtimeData, currentTime, plannedRoute, routePoints, dimensions, showRealtimeShips, showRoutes, selectedShip, ships]);
 
   const handleCanvasClick = (event) => {
     if (!onMapClick || !mapClickMode) return;
@@ -274,6 +276,78 @@ const MapView = ({
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('G', offsetLeft + routePoints.goal[0] * scaleX, offsetTop + routePoints.goal[1] * scaleY);
+    }
+
+    // Draw fishing areas and docking positions for selected ship
+    if (selectedShip && ships) {
+      const ship = ships.find(s => s.shipId === selectedShip.shipId);
+      if (ship) {
+        // Draw fishing area if it exists
+        if (ship.fishingAreaLat && ship.fishingAreaLng) {
+          const lon = ship.fishingAreaLng;
+          const lat = ship.fishingAreaLat;
+          const x = ((lon - 129.4) / 0.02) * mapWidth;
+          const y = (1 - (lat - 35.98) / 0.014) * mapHeight;
+
+          if (x >= 0 && x <= mapWidth && y >= 0 && y <= mapHeight) {
+            const fishX = offsetLeft + x * scaleX;
+            const fishY = offsetTop + y * scaleY;
+
+            // Draw fishing area circle
+            ctx.fillStyle = 'rgba(52, 152, 219, 0.3)';
+            ctx.strokeStyle = '#3498db';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(fishX, fishY, 20, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw fish icon
+            ctx.fillStyle = '#3498db';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('⚓', fishX, fishY);
+
+            // Label
+            ctx.fillStyle = '#2c3e50';
+            ctx.font = 'bold 10px Arial';
+            ctx.fillText('어장', fishX, fishY + 30);
+          }
+        }
+
+        // Draw docking position if it exists
+        if (ship.dockingLat && ship.dockingLng) {
+          const lon = ship.dockingLng;
+          const lat = ship.dockingLat;
+          const x = ((lon - 129.4) / 0.02) * mapWidth;
+          const y = (1 - (lat - 35.98) / 0.014) * mapHeight;
+
+          if (x >= 0 && x <= mapWidth && y >= 0 && y <= mapHeight) {
+            const dockX = offsetLeft + x * scaleX;
+            const dockY = offsetTop + y * scaleY;
+
+            // Draw docking position square
+            ctx.fillStyle = 'rgba(46, 204, 113, 0.3)';
+            ctx.strokeStyle = '#27ae60';
+            ctx.lineWidth = 2;
+            ctx.fillRect(dockX - 15, dockY - 15, 30, 30);
+            ctx.strokeRect(dockX - 15, dockY - 15, 30, 30);
+
+            // Draw dock icon
+            ctx.fillStyle = '#27ae60';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🚢', dockX, dockY);
+
+            // Label
+            ctx.fillStyle = '#2c3e50';
+            ctx.font = 'bold 10px Arial';
+            ctx.fillText('정박지', dockX, dockY + 25);
+          }
+        }
+      }
     }
 
     // Draw real-time ship positions from EUM API (only if toggle is on)

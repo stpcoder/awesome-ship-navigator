@@ -86,6 +86,11 @@ class ShipInfo(BaseModel):
     sign: str
     rgDtm: str
     dcDate: str
+    # New fields for fishing and docking positions
+    fishingAreaLat: Optional[float] = None
+    fishingAreaLng: Optional[float] = None
+    dockingLat: Optional[float] = None
+    dockingLng: Optional[float] = None
 
 
 class CCTVDevice(BaseModel):
@@ -154,3 +159,11 @@ class ShipRealtimeWithRoute(BaseModel):
     current_location: Dict[str, Any]  # Real-time location from EUM
     planned_route: Optional[Dict[str, Any]] = None  # Planned route if exists
     deviation: Optional[Dict[str, float]] = None  # Deviation metrics
+
+
+class ShipPositionUpdate(BaseModel):
+    """Ship position update request"""
+    fishingAreaLat: Optional[float] = None
+    fishingAreaLng: Optional[float] = None
+    dockingLat: Optional[float] = None
+    dockingLng: Optional[float] = None

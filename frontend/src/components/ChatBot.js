@@ -1,13 +1,31 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './ChatBot.css';
+import {
+  RecommendDepartureModal,
+  SendPlanModal,
+  ShowRouteModal,
+  ShowWeatherModal,
+  SendSOSModal,
+  SetFishingAreaModal,
+  ListFeaturesModal
+} from './FunctionModals';
 
 const ChatBot = () => {
+  const navigate = useNavigate();
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [voiceLevel, setVoiceLevel] = useState(0);
+  const [activeModal, setActiveModal] = useState(null);
+  const [modalParameters, setModalParameters] = useState({});
+  const [showDebugPanel, setShowDebugPanel] = useState(true);
+  const [selectedShip, setSelectedShip] = useState('');
+  const [ships, setShips] = useState([]);
+  const [shipInfo, setShipInfo] = useState(null);
+  const [showShipInfo, setShowShipInfo] = useState(false);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const audioContextRef = useRef(null);
@@ -16,6 +34,37 @@ const ChatBot = () => {
   const animationRef = useRef(null);
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
+
+  // Fetch all ships on mount
+  useEffect(() => {
+    fetchShips();
+  }, []);
+
+  // Fetch ship info when selected ship changes
+  useEffect(() => {
+    if (selectedShip && ships.length > 0) {
+      const selected = ships.find(ship => ship.shipId === selectedShip);
+      if (selected) {
+        setShipInfo(selected);
+      }
+    }
+  }, [selectedShip, ships]);
+
+  const fetchShips = async () => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/eum/ships`);
+      if (response.ok) {
+        const shipsData = await response.json();
+        setShips(shipsData);
+        // Set first ship as selected by default
+        if (shipsData.length > 0 && !selectedShip) {
+          setSelectedShip(shipsData[0].shipId);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch ships:', error);
+    }
+  };
 
   useEffect(() => {
     // Initialize Web Speech API
@@ -337,6 +386,15 @@ const ChatBot = () => {
         const data = await response.json();
         console.log('Server response data:', data);
         setResponse(data.response || '응답을 생성할 수 없습니다.');
+
+        // Handle function-based responses
+        if (data.function && data.function !== 'unknown') {
+          setModalParameters({ ...data.parameters, shipId: selectedShip });
+          // Small delay to show response before opening modal
+          setTimeout(() => {
+            setActiveModal(data.function);
+          }, 1000);
+        }
       } else {
         throw new Error(`서버 응답 실패: ${response.status}`);
       }
@@ -375,15 +433,72 @@ const ChatBot = () => {
     }
   };
 
+  const handleFeatureSelect = (functionName) => {
+    setActiveModal(functionName);
+    setModalParameters({ shipId: selectedShip });
+  };
+
+  const getCurrentTime = () => {
+    const now = new Date();
+    return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  };
+
   return (
     <div className="chatbot-container">
-      <div className="glass-background">
-        <div className="liquid-blob blob-1"></div>
-        <div className="liquid-blob blob-2"></div>
-        <div className="liquid-blob blob-3"></div>
+      {/* Ship Selection Panel - Left Side */}
+      <div className="ship-selection-panel">
+        <h3>내 선박 선택</h3>
+        <select
+          value={selectedShip}
+          onChange={(e) => setSelectedShip(e.target.value)}
+          className="ship-selector"
+        >
+          {ships.length === 0 ? (
+            <option value="">선박 목록을 불러오는 중...</option>
+          ) : (
+            ships.map(ship => (
+              <option key={ship.shipId} value={ship.shipId}>
+                {ship.shipId} ({ship.name})
+              </option>
+            ))
+          )}
+        </select>
+        <div className="selected-ship-info">
+          <p>선택된 선박</p>
+          <h4>{selectedShip}</h4>
+          {shipInfo && (
+            <div style={{ fontSize: '0.8rem', marginTop: '10px', color: '#333' }}>
+              <p>{shipInfo.name}</p>
+              <p>{shipInfo.type}</p>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => navigate('/')}
+          className="main-screen-btn"
+        >
+          메인 화면으로
+        </button>
       </div>
 
-      <div className="glass-card">
+      {/* Phone Mockup */}
+      <div className="phone-mockup">
+        <div className="phone-screen">
+          <div className="phone-notch"></div>
+          <div className="phone-status-bar">
+            <div className="phone-time">{getCurrentTime()}</div>
+            <div className="phone-indicators">
+            </div>
+          </div>
+          <div className="phone-content">
+            <div className="glass-background">
+              <div className="liquid-blob blob-1"></div>
+              <div className="liquid-blob blob-2"></div>
+              <div className="liquid-blob blob-3"></div>
+            </div>
+
+            <div className="glass-card">
         <div className="status-bar">
           <div className="status-dot"></div>
           <span className="status-text">
@@ -401,7 +516,7 @@ const ChatBot = () => {
               <button
                 className="voice-button"
                 onClick={handleVoiceButtonClick}
-                disabled={isProcessing}
+                disabled={isProcessing || isRecording}
               >
                 {isRecording ? (
                   <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
@@ -424,30 +539,280 @@ const ChatBot = () => {
           </div>
 
           <div className="text-display">
-            {transcript && (
-              <div className="transcript-box">
-                <span className="label">인식된 텍스트:</span>
-                <p className="transcript">{transcript}</p>
+            {isProcessing && (
+              <div className="loading-container">
+                <div className="loading-spinner">
+                  <div className="spinner-ring"></div>
+                  <div className="spinner-ring"></div>
+                  <div className="spinner-ring"></div>
+                </div>
+                <p className="loading-text">처리하고 있습니다...</p>
               </div>
             )}
 
-            {response && (
-              <div className="response-box">
-                <span className="label">AI 응답:</span>
-                <p className="response">{response}</p>
+            {!isProcessing && transcript && (
+              <div className="message-bubble user-message">
+                <p className="message-text">{transcript}</p>
+              </div>
+            )}
+
+            {!isProcessing && response && (
+              <div className="message-bubble ai-message">
+                <p className="message-text">{response}</p>
               </div>
             )}
           </div>
         </div>
 
         <div className="hint-text">
-          {!isRecording && !transcript && (
+          {!isRecording && !transcript && !isProcessing && (
             <p>마이크를 눌러 시작하세요</p>
           )}
           {isRecording && (
             <p>말씀해 주세요...</p>
           )}
+          {isProcessing && (
+            <p>응답을 생성하는 중...</p>
+          )}
         </div>
+      </div>
+
+      {/* Function Modals - Inside Phone Screen */}
+      <RecommendDepartureModal
+        isOpen={activeModal === 'recommend_departure'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <SendPlanModal
+        isOpen={activeModal === 'send_plan'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <ShowRouteModal
+        isOpen={activeModal === 'show_route'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <ShowWeatherModal
+        isOpen={activeModal === 'show_weather'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <SendSOSModal
+        isOpen={activeModal === 'send_sos'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <SetFishingAreaModal
+        isOpen={activeModal === 'set_fishing_area'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <ListFeaturesModal
+        isOpen={activeModal === 'list_features'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+        onFeatureSelect={handleFeatureSelect}
+      />
+
+      {/* Ship Info Panel - Bottom of Phone */}
+      {shipInfo && (
+        <div
+          className="phone-ship-info-panel"
+          style={{
+            position: 'absolute',
+            bottom: showShipInfo ? '20px' : '-280px',
+            left: '20px',
+            right: '20px',
+            background: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(20px)',
+            borderRadius: '20px',
+            padding: '20px',
+            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.1)',
+            transition: 'bottom 0.3s ease',
+            zIndex: 10,
+            maxHeight: '300px',
+            overflow: 'auto'
+          }}
+        >
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '15px'
+          }}>
+            <h4 style={{ margin: 0, color: '#1a1a1a', fontSize: '1rem' }}>선박 상세 정보</h4>
+            <button
+              onClick={() => setShowShipInfo(!showShipInfo)}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '1.2rem',
+                cursor: 'pointer',
+                color: '#666',
+                padding: '0 5px'
+              }}
+            >
+              {showShipInfo ? '✕' : '▲'}
+            </button>
+          </div>
+
+          {showShipInfo && shipInfo && (
+            <div style={{ fontSize: '0.85rem', color: '#333' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '15px' }}>
+                <div>
+                  <strong>선박명:</strong> {shipInfo.name}
+                </div>
+                <div>
+                  <strong>ID:</strong> {shipInfo.shipId}
+                </div>
+                <div>
+                  <strong>유형:</strong> {shipInfo.type}
+                </div>
+                <div>
+                  <strong>모항:</strong> {shipInfo.pol}
+                </div>
+                <div>
+                  <strong>길이:</strong> {shipInfo.length}m
+                </div>
+                <div>
+                  <strong>폭:</strong> {shipInfo.breath}m
+                </div>
+                <div>
+                  <strong>깊이:</strong> {shipInfo.depth}m
+                </div>
+                <div>
+                  <strong>총톤수:</strong> {shipInfo.gt}톤
+                </div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid #e0e0e0', margin: '15px 0' }} />
+
+              {shipInfo.type === '어선' && shipInfo.fishingAreaLat && (
+                <div style={{ marginBottom: '10px' }}>
+                  <strong>어장 위치:</strong><br/>
+                  <span style={{ marginLeft: '10px' }}>
+                    위도: {parseFloat(shipInfo.fishingAreaLat).toFixed(4)}°,
+                    경도: {parseFloat(shipInfo.fishingAreaLng).toFixed(4)}°
+                  </span>
+                </div>
+              )}
+
+              {shipInfo.dockingLat && (
+                <div>
+                  <strong>정박 위치:</strong><br/>
+                  <span style={{ marginLeft: '10px' }}>
+                    위도: {parseFloat(shipInfo.dockingLat).toFixed(4)}°,
+                    경도: {parseFloat(shipInfo.dockingLng).toFixed(4)}°
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Toggle Button for Ship Info - Always Visible */}
+      {!showShipInfo && shipInfo && (
+        <button
+          onClick={() => setShowShipInfo(true)}
+          style={{
+            position: 'absolute',
+            bottom: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(255, 255, 255, 0.9)',
+            backdropFilter: 'blur(10px)',
+            border: 'none',
+            borderRadius: '20px',
+            padding: '10px 20px',
+            fontSize: '0.9rem',
+            fontWeight: '500',
+            color: '#333',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+            cursor: 'pointer',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          선박 정보 보기
+        </button>
+      )}
+    </div>
+  </div>
+</div>
+
+      {/* Debug Panel - Outside Phone */}
+      <div className="debug-panel">
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '15px'
+        }}>
+          <h3>디버그 패널</h3>
+          <button
+            onClick={() => setShowDebugPanel(!showDebugPanel)}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '1.5rem',
+              cursor: 'pointer',
+              color: 'rgba(255, 255, 255, 0.6)'
+            }}
+          >
+            {showDebugPanel ? '−' : '+'}
+          </button>
+        </div>
+
+        {showDebugPanel && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <button
+              onClick={() => handleFeatureSelect('recommend_departure')}
+              className="debug-button"
+            >
+              입출항 시간 추천
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('send_plan')}
+              className="debug-button"
+            >
+              계획 전송
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('show_route')}
+              className="debug-button"
+            >
+              경로 표시
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('show_weather')}
+              className="debug-button"
+            >
+              날씨 정보
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('send_sos')}
+              className="debug-button emergency"
+            >
+              긴급 신호
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('set_fishing_area')}
+              className="debug-button"
+            >
+              어장 지정
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('list_features')}
+              className="debug-button"
+            >
+              기능 목록
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
