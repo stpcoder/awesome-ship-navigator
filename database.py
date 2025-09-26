@@ -157,6 +157,40 @@ class WeatherData(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SOSAlert(Base):
+    """SOS emergency alerts from ships"""
+    __tablename__ = "sos_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ship_id = Column(String, ForeignKey('ships.ship_id'), index=True)
+    ship_name = Column(String)
+    emergency_type = Column(String)  # collision, fire, engine, medical, other
+    message = Column(Text)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    status = Column(String, default='active')  # active, responding, resolved
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime)
+
+    ship = relationship("Ship")
+
+
+class Message(Base):
+    """Chat messages between ships and control center"""
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(String, index=True)  # ship_id or 'control_center'
+    sender_name = Column(String)
+    recipient_id = Column(String, index=True)  # ship_id, 'control_center', or 'all'
+    recipient_name = Column(String)
+    message = Column(Text)
+    message_type = Column(String, default='text')  # text, broadcast, system
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    read_at = Column(DateTime)
+
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 

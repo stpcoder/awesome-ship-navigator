@@ -1,8 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import mapboxgl from 'mapbox-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import './FunctionModals.css';
 
 const API_BASE = 'http://localhost:8000';
+
+// Set Mapbox access token
+mapboxgl.accessToken = process.env.REACT_APP_MAPBOX_TOKEN || 'pk.eyJ1IjoidGFlaG9qZSIsImEiOiJjbWZtYnZlbWowMDhlMnBvZXltZXdmbnJhIn0.qZ5M8WwEMUfIA9G42G3ztA';
 
 // Modal wrapper component
 const Modal = ({ isOpen, onClose, children, title }) => {
@@ -172,27 +177,26 @@ export const ShowRouteModal = ({ isOpen, onClose, parameters }) => {
   const fetchRoutes = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE}/api/ships`);
-      const allRoutes = response.data.filter(r => r.path_points && r.path_points.length > 0);
+      // Fetch route information from database
+      const response = await axios.get(`${API_BASE}/api/ship/${parameters.shipId}`);
 
-      // Find my ship's route
-      const myRoute = allRoutes.find(r => r.ship_id === parameters.shipId);
-      setMyShipRoute(myRoute);
+      if (response.data && response.data.ship_id === parameters.shipId) {
+        setMyShipRoute(response.data);
+      } else {
+        setMyShipRoute(null);
+      }
 
-      // Get other ships' routes
-      const others = allRoutes.filter(r => r.ship_id !== parameters.shipId);
+      // Fetch all ships to get other routes
+      const allShipsResponse = await axios.get(`${API_BASE}/api/ships`);
+      const others = allShipsResponse.data.filter(r =>
+        r.ship_id !== parameters.shipId &&
+        r.path_points &&
+        r.path_points.length > 0
+      );
       setOtherRoutes(others);
     } catch (error) {
       console.error('Failed to fetch routes:', error);
-      // If API fails, create a mock route for the selected ship
-      setMyShipRoute({
-        ship_id: parameters.shipId,
-        status: 'planned',
-        optimization_mode: 'Flexible',
-        departure_time: Date.now() / 60000 + 30,
-        arrival_time: Date.now() / 60000 + 120,
-        path_points: []
-      });
+      setMyShipRoute(null);
     } finally {
       setLoading(false);
     }
@@ -205,7 +209,7 @@ export const ShowRouteModal = ({ isOpen, onClose, parameters }) => {
       ) : (
         <>
           {/* My Ship's Route - Always Shown First */}
-          {myShipRoute ? (
+          {myShipRoute && myShipRoute.path_points && myShipRoute.path_points.length > 0 ? (
             <div className="route-item selected" style={{ marginBottom: '20px' }}>
               <h4>🚢 내 선박: {parameters?.shipId}</h4>
               <p>상태: {myShipRoute.status || '대기중'}</p>
@@ -219,9 +223,18 @@ export const ShowRouteModal = ({ isOpen, onClose, parameters }) => {
               </div>
             </div>
           ) : (
-            <div className="info" style={{ marginBottom: '20px' }}>
-              <p>선박 {parameters?.shipId}의 경로가 아직 설정되지 않았습니다.</p>
-              <p>메인 화면에서 경로를 계획해주세요.</p>
+            <div className="info" style={{
+              marginBottom: '20px',
+              background: 'rgba(255, 255, 255, 0.1)',
+              padding: '20px',
+              borderRadius: '10px',
+              textAlign: 'center'
+            }}>
+              <h4 style={{ marginBottom: '10px' }}>📍 경로가 없습니다</h4>
+              <p>선박 {parameters?.shipId}의 계획된 경로가 없습니다.</p>
+              <p style={{ fontSize: '0.9rem', marginTop: '10px' }}>
+                💡 챗봇에서 "출항" 또는 "입항"을 말해보세요
+              </p>
             </div>
           )}
 
@@ -347,16 +360,61 @@ export const SendSOSModal = ({ isOpen, onClose, parameters }) => {
     position: null
   });
   const [sending, setSending] = useState(false);
+  const [shipPosition, setShipPosition] = useState(null);
+
+  useEffect(() => {
+    // Fetch ship's current position when modal opens
+    const fetchShipPosition = async () => {
+      if (!isOpen || !parameters?.shipId) return;
+
+      try {
+        const response = await axios.get(`/api/eum/ships/${parameters.shipId}/realtime`);
+        if (response.data) {
+          setShipPosition({
+            latitude: response.data.lati,
+            longitude: response.data.longi
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch ship position:', error);
+        // Use default position if fetch fails
+        setShipPosition({
+          latitude: 35.99,
+          longitude: 129.57
+        });
+      }
+    };
+
+    fetchShipPosition();
+  }, [isOpen, parameters]);
 
   const handleSendSOS = async () => {
+    if (!parameters?.shipId || !shipPosition) {
+      alert('선박 정보를 가져올 수 없습니다.');
+      return;
+    }
+
     setSending(true);
 
-    // Simulate sending SOS
-    setTimeout(() => {
-      alert('🚨 긴급 신호가 전송되었습니다!\n관제센터에서 곧 연락드릴 예정입니다.');
+    try {
+      const response = await axios.post('/api/sos', {
+        ship_id: parameters.shipId,
+        emergency_type: emergency.type,
+        message: emergency.message || `긴급 상황 발생: ${emergency.type}`,
+        latitude: shipPosition.latitude,
+        longitude: shipPosition.longitude
+      });
+
+      if (response.data) {
+        alert(`🚨 긴급 신호가 전송되었습니다!\n신호 번호: ${response.data.id}\n관제센터에서 곧 연락드릴 예정입니다.`);
+        onClose();
+      }
+    } catch (error) {
+      console.error('Failed to send SOS:', error);
+      alert('긴급 신호 전송에 실패했습니다. 다시 시도해주세요.');
+    } finally {
       setSending(false);
-      onClose();
-    }, 2000);
+    }
   };
 
   return (
@@ -422,78 +480,145 @@ export const SendSOSModal = ({ isOpen, onClose, parameters }) => {
 
 // Set Fishing Area Modal
 export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
-  const [areas, setAreas] = useState([]);
-  const [newArea, setNewArea] = useState({
-    name: '',
-    latitude: '',
-    longitude: ''
+  const mapContainer = useRef(null);
+  const map = useRef(null);
+  const markerRef = useRef(null);
+  const [selectedLocation, setSelectedLocation] = useState({
+    latitude: 35.99,  // 구룡포항 위도
+    longitude: 129.57  // 구룡포항 경도
   });
+  const [saving, setSaving] = useState(false);
 
-  const handleAddArea = () => {
-    if (!newArea.name || !newArea.latitude || !newArea.longitude) {
-      alert('모든 정보를 입력해주세요');
-      return;
+  useEffect(() => {
+    if (!isOpen || map.current) return;
+
+    // Initialize map centered on 구룡포항 with wider view
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: 'mapbox://styles/mapbox/satellite-streets-v12',
+      center: [129.57, 35.99],  // [lng, lat] for 구룡포항
+      zoom: 12  // Reduced zoom for wider area view
+    });
+
+    // Add navigation controls
+    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+    // Add draggable marker for fishing area
+    markerRef.current = new mapboxgl.Marker({
+      draggable: true,
+      color: '#FF6B6B'
+    })
+      .setLngLat([129.57, 35.99])
+      .addTo(map.current)
+      .setPopup(
+        new mapboxgl.Popup({ offset: 25 })
+          .setHTML('<p>어장 위치<br/>드래그하여 이동</p>')
+      );
+
+    // Handle marker drag events
+    markerRef.current.on('dragend', () => {
+      const lngLat = markerRef.current.getLngLat();
+      setSelectedLocation({
+        latitude: lngLat.lat.toFixed(6),
+        longitude: lngLat.lng.toFixed(6)
+      });
+    });
+
+    // Add click event to move marker
+    map.current.on('click', (e) => {
+      const { lng, lat } = e.lngLat;
+      markerRef.current.setLngLat([lng, lat]);
+      setSelectedLocation({
+        latitude: lat.toFixed(6),
+        longitude: lng.toFixed(6)
+      });
+    });
+
+    return () => {
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, [isOpen]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      // Save fishing area to backend
+      const response = await axios.put(
+        `${API_BASE}/api/eum/ships/${parameters?.shipId}/positions`,
+        {
+          fishingAreaLat: parseFloat(selectedLocation.latitude),
+          fishingAreaLng: parseFloat(selectedLocation.longitude)
+        }
+      );
+
+      if (response.status === 200) {
+        alert(`어장 위치가 저장되었습니다!\n위도: ${selectedLocation.latitude}\n경도: ${selectedLocation.longitude}`);
+        onClose();
+      }
+    } catch (error) {
+      console.error('Failed to save fishing area:', error);
+      alert('어장 위치 저장에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setSaving(false);
     }
-
-    setAreas([...areas, newArea]);
-    setNewArea({ name: '', latitude: '', longitude: '' });
-    alert('어장 위치가 저장되었습니다');
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="🎣 어장 위치 지정">
-      <div className="fishing-area">
-        <div className="form">
-          <div className="form-group">
-            <label>어장 이름</label>
-            <input
-              type="text"
-              value={newArea.name}
-              onChange={e => setNewArea({...newArea, name: e.target.value})}
-              placeholder="어장 이름"
-            />
-          </div>
-          <div className="form-group">
-            <label>위도</label>
-            <input
-              type="number"
-              value={newArea.latitude}
-              onChange={e => setNewArea({...newArea, latitude: e.target.value})}
-              placeholder="35.9850"
-              step="0.0001"
-            />
-          </div>
-          <div className="form-group">
-            <label>경도</label>
-            <input
-              type="number"
-              value={newArea.longitude}
-              onChange={e => setNewArea({...newArea, longitude: e.target.value})}
-              placeholder="129.5579"
-              step="0.0001"
-            />
-          </div>
-          <button className="add-btn" onClick={handleAddArea}>
-            어장 추가
-          </button>
+    <Modal isOpen={isOpen} onClose={onClose} title="🎣 어장 위치 선택">
+      <div className="fishing-area-map">
+        <div style={{
+          width: '100%',
+          height: '300px',  // Reduced height to avoid too tall display
+          borderRadius: '8px',
+          overflow: 'hidden',
+          marginBottom: '15px'
+        }}>
+          <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
         </div>
 
-        {areas.length > 0 && (
-          <div className="areas-list">
-            <h4>저장된 어장</h4>
-            {areas.map((area, index) => (
-              <div key={index} className="area-item">
-                <span>{area.name}</span>
-                <span>({area.latitude}, {area.longitude})</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <button className="map-select-btn" onClick={() => {
-          alert('지도에서 위치를 선택하는 기능은 준비 중입니다');
+        <div className="location-info" style={{
+          background: 'rgba(255, 255, 255, 0.1)',
+          padding: '15px',
+          borderRadius: '8px',
+          marginBottom: '15px'
         }}>
-          지도에서 선택하기
+          <p style={{ margin: '5px 0' }}>
+            <strong>선택된 위치</strong>
+          </p>
+          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
+            위도: {selectedLocation.latitude}°
+          </p>
+          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
+            경도: {selectedLocation.longitude}°
+          </p>
+        </div>
+
+        <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+          <p style={{ fontSize: '0.85rem', color: '#888' }}>
+            지도를 클릭하거나 마커를 드래그하여 어장 위치를 선택하세요
+          </p>
+        </div>
+
+        <button
+          className="submit-btn"
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            width: '100%',
+            padding: '12px',
+            background: saving ? '#666' : '#FF6B6B',
+            color: 'white',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '1rem',
+            fontWeight: 'bold',
+            cursor: saving ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {saving ? '저장 중...' : '어장 위치 저장'}
         </button>
       </div>
     </Modal>
@@ -503,12 +628,13 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
 // List Features Modal
 export const ListFeaturesModal = ({ isOpen, onClose, parameters, onFeatureSelect }) => {
   const features = [
-    { icon: '', name: '권장 입출항 시간 안내', description: '최적의 입출항 시간을 추천합니다', function: 'recommend_departure' },
-    { icon: '', name: '입출항 계획 전송', description: '계획을 관제센터에 전송합니다', function: 'send_plan' },
-    { icon: '', name: '최적 경로 표시', description: '충돌 회피 경로를 표시합니다', function: 'show_route' },
-    { icon: '', name: '날씨 및 경보', description: '실시간 날씨 정보를 확인합니다', function: 'show_weather' },
-    { icon: '', name: '긴급 메시지', description: '긴급 상황 신호를 전송합니다', function: 'send_sos' },
-    { icon: '', name: '어장 위치 지정', description: '어장 위치를 저장하고 관리합니다', function: 'set_fishing_area' }
+    { name: '입출항 계획', description: '최적의 입출항 시간과 경로를 계획합니다', function: 'recommend_departure' },
+    { name: '경로 표시', description: '계획된 경로를 확인합니다', function: 'show_route' },
+    { name: '날씨 정보', description: '실시간 날씨 정보를 확인합니다', function: 'show_weather' },
+    { name: '긴급 신호', description: '긴급 상황 신호를 전송합니다', function: 'send_sos' },
+    { name: '어장 위치 지정', description: '어장 위치를 지도에서 선택합니다', function: 'set_fishing_area' },
+    { name: '수신 메시지', description: '수신된 메시지를 확인합니다', function: 'receive_messages' },
+    { name: '메시지 전송', description: '관제센터에 메시지를 전송합니다', function: 'send_message' }
   ];
 
   const handleFeatureClick = (feature) => {
@@ -528,7 +654,6 @@ export const ListFeaturesModal = ({ isOpen, onClose, parameters, onFeatureSelect
             onClick={() => handleFeatureClick(feature)}
             style={{ cursor: 'pointer' }}
           >
-            <span className="feature-icon">{feature.icon}</span>
             <div className="feature-info">
               <h4>{feature.name}</h4>
               <p>{feature.description}</p>
@@ -538,6 +663,195 @@ export const ListFeaturesModal = ({ isOpen, onClose, parameters, onFeatureSelect
       </div>
       <div className="help-text">
         <p>원하시는 기능을 클릭하거나 말씀해주시면 바로 실행해드립니다!</p>
+      </div>
+    </Modal>
+  );
+};
+
+// Receive Messages Modal
+export const ReceiveMessagesModal = ({ isOpen, onClose, parameters }) => {
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchMessages();
+    }
+  }, [isOpen]);
+
+  const fetchMessages = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE}/api/messages`, {
+        params: { ship_id: parameters?.shipId }
+      });
+
+      setMessages(response.data);
+
+      // Mark messages as read
+      const unreadIds = response.data
+        .filter(msg => !msg.is_read && msg.recipient_id === parameters?.shipId)
+        .map(msg => msg.id);
+
+      if (unreadIds.length > 0) {
+        await axios.patch(`${API_BASE}/api/messages/mark-read`, {
+          message_ids: unreadIds
+        });
+      }
+    } catch (error) {
+      console.error('Failed to fetch messages:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="수신 메시지">
+      <div className="messages-container">
+        {loading ? (
+          <p>메시지를 불러오는 중...</p>
+        ) : messages.length === 0 ? (
+          <p style={{ textAlign: 'center', color: '#666' }}>수신된 메시지가 없습니다.</p>
+        ) : (
+          <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+            {messages.map(msg => (
+              <div
+                key={msg.id}
+                style={{
+                  marginBottom: '1rem',
+                  padding: '0.8rem',
+                  background: msg.sender_id === parameters?.shipId ? '#e3f2fd' : '#f5f5f5',
+                  borderRadius: '6px',
+                  border: '1px solid #e0e0e0'
+                }}
+              >
+                <div style={{
+                  fontSize: '0.9rem',
+                  color: '#666',
+                  marginBottom: '0.5rem'
+                }}>
+                  <strong>발신:</strong> {msg.sender_name} → <strong>수신:</strong> {msg.recipient_name}
+                </div>
+                <div style={{ marginBottom: '0.5rem' }}>{msg.message}</div>
+                <div style={{ fontSize: '0.8rem', color: '#999' }}>
+                  {new Date(msg.created_at).toLocaleString('ko-KR')}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+          <button
+            onClick={fetchMessages}
+            style={{
+              padding: '0.5rem 1rem',
+              background: '#007bff',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            새로고침
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// Send Message Modal
+export const SendMessageModal = ({ isOpen, onClose, parameters }) => {
+  const [recipient, setRecipient] = useState('control_center');
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleSendMessage = async () => {
+    if (!message.trim()) {
+      alert('메시지를 입력해주세요.');
+      return;
+    }
+
+    setSending(true);
+    try {
+      const response = await axios.post(`${API_BASE}/api/messages`, {
+        sender_id: parameters?.shipId || 'unknown',
+        recipient_id: recipient,
+        message: message,
+        message_type: recipient === 'all' ? 'broadcast' : 'text'
+      });
+
+      if (response.data) {
+        alert('메시지가 전송되었습니다.');
+        setMessage('');
+        onClose();
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      alert('메시지 전송에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="메시지 전송">
+      <div className="message-form">
+        <div style={{ marginBottom: '1rem' }}>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+            수신자 선택:
+          </label>
+          <select
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '0.5rem',
+              borderRadius: '4px',
+              border: '1px solid #ced4da'
+            }}
+          >
+            <option value="control_center">관제센터</option>
+            <option value="all">전체 선박</option>
+          </select>
+        </div>
+
+        <div style={{ marginBottom: '1rem' }}>
+          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+            메시지:
+          </label>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="전송할 메시지를 입력하세요..."
+            rows={4}
+            style={{
+              width: '100%',
+              padding: '0.5rem',
+              borderRadius: '4px',
+              border: '1px solid #ced4da',
+              resize: 'vertical'
+            }}
+          />
+        </div>
+
+        <button
+          onClick={handleSendMessage}
+          disabled={sending}
+          style={{
+            width: '100%',
+            padding: '0.75rem',
+            background: sending ? '#666' : '#007bff',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            fontSize: '1rem',
+            fontWeight: 'bold',
+            cursor: sending ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {sending ? '전송 중...' : '메시지 전송'}
+        </button>
       </div>
     </Modal>
   );

@@ -1,19 +1,31 @@
-Flask==3.0.0
-Flask-Cors==4.0.0
-matplotlib==3.10.6
-numpy==2.3.3
-pydantic==2.11.7
-python-dotenv==1.0.0
-pyvisgraph==0.2.1
-requests==2.32.5
-shapely==2.1.1
-sqlalchemy==2.0.23
-openai==1.6.1
-websocket-client==1.6.4
-geopy==2.4.0
-scipy==1.11.4
-Pillow==10.4.0
+# Backend Dependencies
 fastapi==0.104.1
 uvicorn==0.24.0
+Flask==3.0.0
+Flask-Cors==4.0.0
+
+# Data Processing
+numpy==2.3.3
+matplotlib==3.10.6
+shapely==2.1.1
+pyvisgraph==0.2.1
+# scipy==1.11.4  # Optional - may have installation issues on some systems
+Pillow==10.4.0
+
+# Database
+sqlalchemy==2.0.23
 aiosqlite==0.19.0
+
+# API & Communication
+pydantic==2.11.7
+requests==2.32.5
+websocket-client==1.6.4
 python-multipart==0.0.6
+httpx==0.25.0
+
+# AI & Location Services
+openai==1.6.1
+geopy==2.4.0
+
+# Utilities
+python-dotenv==1.0.0

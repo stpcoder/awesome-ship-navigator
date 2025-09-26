@@ -22,33 +22,51 @@ class ChatbotService:
         # Define system prompt
         self.system_prompt = """
         당신은 선박 항로 관제 시스템의 AI 어시스턴트입니다.
-        사용자의 요청을 분석하여 아래 기능 중 하나를 JSON 형식으로 반환하세요.
+        사용자의 요청을 분석하여 적절한 기능을 JSON 형식으로 반환하세요.
 
-        기능 목록:
-        1. "recommend_departure" - 권장 입출항 시간 안내 (입항/출항 시간 관련 질문)
-        2. "send_plan" - 입출항 계획 전송 (계획 전송/제출 관련)
-        3. "show_route" - 최적 경로 표시 (경로/항로 표시 요청)
-        4. "show_weather" - 날씨 및 경보 표시 (날씨/기상/경보 관련)
-        5. "send_sos" - SOS 메시지 전송 (긴급/위험/도움 요청)
-        6. "set_fishing_area" - 어장 위치 지정 (어장/투망 위치 설정)
-        7. "list_features" - 기능 목록 안내 (기능 설명/도움말)
-        8. "unknown" - 이해하지 못한 요청
+        특별히 출항/입항 관련 요청에 주의하세요:
+        - "출항": 정박지 → 어장 (departure)
+        - "입항": 어장 → 정박지 (arrival)
+
+        출항/입항 요청 분석시:
+        1. 방향 파악: 출항(departure) 또는 입항(arrival)
+        2. 시간 파악: 구체적 시간이 언급되었는지 (예: "30분 후", "2시간 뒤", "지금")
+        3. 시간 형식 변환:
+           - "지금" → "now"
+           - "30분 후" → "30m"
+           - "1시간 후" → "1h"
+           - "2시간 30분 후" → "2h30m"
 
         응답 형식:
         {
             "function": "기능명",
             "message": "사용자에게 보여줄 안내 메시지",
             "parameters": {
-                // 필요한 추가 파라미터 (옵션)
+                "type": "departure|arrival",  // 출항/입항 구분
+                "preferred_time": "시간 정보",  // 예: "now", "30m", "1h", "2h30m"
+                "need_clarification": false  // 시간이 명시되면 항상 false
             }
         }
 
         예시:
-        - "언제 입항하는게 좋아?" → {"function": "recommend_departure", "message": "현재 항로 상황을 분석하여 최적의 입항 시간을 확인하겠습니다.", "parameters": {"type": "arrival"}}
-        - "날씨 보여줘" → {"function": "show_weather", "message": "현재 구룡포항의 날씨 정보를 보여드리겠습니다.", "parameters": {}}
-        - "긴급상황이야!" → {"function": "send_sos", "message": "긴급 신호를 전송합니다. 관제센터에 연결하겠습니다.", "parameters": {"priority": "high"}}
+        - "30분 후에 출항하려고 해" → {"function": "recommend_departure", "message": "30분 후 출항 경로를 계획하겠습니다.", "parameters": {"type": "departure", "preferred_time": "30m", "need_clarification": false}}
+        - "지금 입항할래" → {"function": "recommend_departure", "message": "지금 바로 입항 경로를 계획하겠습니다.", "parameters": {"type": "arrival", "preferred_time": "now", "need_clarification": false}}
+        - "1시간 후에 입항 예정" → {"function": "recommend_departure", "message": "1시간 후 입항 경로를 계획하겠습니다.", "parameters": {"type": "arrival", "preferred_time": "1h", "need_clarification": false}}
 
-        중요: 반드시 유효한 JSON 형식으로만 응답하세요.
+        기능 목록 (8개):
+        1. "recommend_departure" - 출항/입항 경로 계획
+        2. "weather" - 날씨 정보 확인
+        3. "sos" - 긴급 상황 신고
+        4. "set_fishing_area" - 어장 위치 설정
+        5. "receive_messages" - 수신 메시지 확인
+        6. "send_message" - 메시지 전송
+        7. "help" - 사용 안내
+        8. "unknown" - 이해하지 못한 요청
+
+        중요:
+        - 출항/입항 요청시 시간이 명시되면 바로 처리
+        - 계획 전송, 경로 표시는 자동으로 처리되므로 별도 기능 없음
+        - 반드시 유효한 JSON 형식으로만 응답하세요.
         """
 
     def process_text(self, message: str) -> Dict[str, Any]:
@@ -58,15 +76,15 @@ class ChatbotService:
             return self._fallback_detection(message)
 
         try:
-            # Call GPT API (GPT-5-mini - latest model)
+            # Call GPT API
             response = self.client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-4o-mini",  # Using available model
                 messages=[
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": message}
                 ],
-                # GPT-5-mini only supports default temperature (1)
-                max_completion_tokens=200,  # GPT-5-mini uses max_completion_tokens instead of max_tokens
+                temperature=0.3,
+                max_tokens=200,
                 response_format={"type": "json_object"}
             )
 
@@ -92,66 +110,109 @@ class ChatbotService:
         """Fallback keyword-based detection"""
         message_lower = message.lower()
 
-        # Keyword mapping
-        if any(word in message_lower for word in ["입항", "출항", "언제", "시간"]):
+        # Parse time from message
+        def extract_time(msg: str) -> str:
+            if "지금" in msg or "바로" in msg:
+                return "now"
+            elif "30분" in msg:
+                return "30m"
+            elif "1시간" in msg or "한시간" in msg:
+                if "30분" in msg:
+                    return "1h30m"
+                return "1h"
+            elif "2시간" in msg or "두시간" in msg:
+                if "30분" in msg:
+                    return "2h30m"
+                return "2h"
+            elif "분" in msg:
+                # Extract number before 분
+                import re
+                match = re.search(r'(\d+)\s*분', msg)
+                if match:
+                    return f"{match.group(1)}m"
+            return "30m"  # Default
+
+        # Main function mapping
+        if any(word in message_lower for word in ["출항", "출발"]):
+            time = extract_time(message_lower)
             return {
                 "function": "recommend_departure",
-                "message": "권장 입출항 시간을 확인하겠습니다.",
-                "parameters": {"type": "auto"}
+                "message": f"{time.replace('h', '시간 ').replace('m', '분')} 후 출항 경로를 계획하겠습니다." if time != "now" else "지금 바로 출항 경로를 계획하겠습니다.",
+                "parameters": {
+                    "type": "departure",
+                    "preferred_time": time,
+                    "need_clarification": False
+                }
             }
-        elif any(word in message_lower for word in ["계획", "전송", "보내", "제출"]):
+        elif any(word in message_lower for word in ["입항", "들어", "귀항"]):
+            time = extract_time(message_lower)
             return {
-                "function": "send_plan",
-                "message": "입출항 계획을 전송하겠습니다.",
+                "function": "recommend_departure",
+                "message": f"{time.replace('h', '시간 ').replace('m', '분')} 후 입항 경로를 계획하겠습니다." if time != "now" else "지금 바로 입항 경로를 계획하겠습니다.",
+                "parameters": {
+                    "type": "arrival",
+                    "preferred_time": time,
+                    "need_clarification": False
+                }
+            }
+        elif any(word in message_lower for word in ["날씨", "기상", "바람", "파도", "비"]):
+            return {
+                "function": "weather",
+                "message": "현재 날씨 정보를 확인하겠습니다.",
                 "parameters": {}
             }
-        elif any(word in message_lower for word in ["경로", "항로", "길", "코스"]):
+        elif any(word in message_lower for word in ["어장", "조업", "어획"]):
             return {
-                "function": "show_route",
-                "message": "최적 경로를 지도에 표시하겠습니다.",
+                "function": "set_fishing_area",
+                "message": "어장 위치를 지도에서 선택해주세요.",
                 "parameters": {}
             }
-        elif any(word in message_lower for word in ["날씨", "기상", "바람", "파도", "경보"]):
+        elif any(word in message_lower for word in ["sos", "긴급", "위험", "도움", "구조"]):
             return {
-                "function": "show_weather",
-                "message": "현재 날씨 정보를 보여드리겠습니다.",
-                "parameters": {}
-            }
-        elif any(word in message_lower for word in ["sos", "긴급", "위험", "도움", "구조", "큰일"]):
-            return {
-                "function": "send_sos",
+                "function": "sos",
                 "message": "긴급 신호를 전송합니다! 관제센터에 연결하겠습니다.",
                 "parameters": {"priority": "high"}
             }
-        elif any(word in message_lower for word in ["어장", "그물", "투망", "낚시"]):
+        elif any(word in message_lower for word in ["수신 메시지", "받은 메시지", "메시지 확인", "메시지 읽기"]):
             return {
-                "function": "set_fishing_area",
-                "message": "어장 위치를 지정하시겠습니까? 지도에서 위치를 선택해주세요.",
+                "function": "receive_messages",
+                "message": "수신된 메시지를 확인합니다.",
                 "parameters": {}
             }
-        elif any(word in message_lower for word in ["기능", "도움", "설명", "뭐", "무엇"]):
+        elif any(word in message_lower for word in ["메시지 전송", "메시지 보내", "관제센터에 전달", "관제센터한테"]):
+            # Extract message if provided inline
+            import re
+            match = re.search(r'["\'"](.+)["\'"]', message)
+            msg_content = match.group(1) if match else None
+
             return {
-                "function": "list_features",
+                "function": "send_message",
+                "message": "메시지를 전송합니다.",
+                "parameters": {"message": msg_content} if msg_content else {}
+            }
+        elif any(word in message_lower for word in ["기능", "도움", "help", "명령", "사용법"]):
+            return {
+                "function": "help",
                 "message": self._get_features_list(),
                 "parameters": {}
             }
         else:
             return {
                 "function": "unknown",
-                "message": "죄송합니다. 이해하지 못했습니다. 다시 말씀해 주시겠어요?",
+                "message": "죄송합니다. 이해하지 못했습니다. 출항/입항 시간, 날씨, 도움말 등을 요청해주세요.",
                 "parameters": {}
             }
 
     def _get_default_message(self, function: str) -> str:
         """Get default message for function"""
         messages = {
-            "recommend_departure": "권장 입출항 시간을 확인하겠습니다.",
-            "send_plan": "입출항 계획을 전송하겠습니다.",
-            "show_route": "최적 경로를 표시하겠습니다.",
-            "show_weather": "날씨 정보를 확인하겠습니다.",
-            "send_sos": "긴급 신호를 전송합니다!",
-            "set_fishing_area": "어장 위치를 지정해주세요.",
-            "list_features": self._get_features_list(),
+            "recommend_departure": "입출항 경로를 계획하겠습니다.",
+            "weather": "날씨 정보를 확인하겠습니다.",
+            "sos": "긴급 신호를 전송합니다!",
+            "set_fishing_area": "어장 위치를 지도에서 선택해주세요.",
+            "receive_messages": "수신된 메시지를 확인합니다.",
+            "send_message": "메시지를 전송합니다.",
+            "help": self._get_features_list(),
             "unknown": "죄송합니다. 다시 말씀해 주시겠어요?"
         }
         return messages.get(function, "처리하겠습니다.")
@@ -159,14 +220,29 @@ class ChatbotService:
     def _get_features_list(self) -> str:
         """Get features list message"""
         return """
-        사용 가능한 기능:
+        🚢 선박 항로 관제 시스템 사용 안내
 
-        📅 권장 입출항 시간 안내
-        📤 입출항 계획 전송
-        🗺️ 최적 경로 표시
-        🌤️ 날씨 및 경보 확인
-        🆘 긴급 메시지 전송
-        🎣 어장 위치 지정
+        사용 가능한 명령어:
 
-        원하시는 기능을 말씀해주세요!
+        ⚓ 출항/입항 계획
+           - "30분 후에 출항하려고 해"
+           - "지금 입항할래"
+           - "1시간 후에 출항 예정이야"
+
+        🌤️ 날씨 정보
+           - "날씨 어때?"
+           - "바람 상태 알려줘"
+
+        🆘 긴급 상황
+           - "SOS"
+           - "도움이 필요해"
+
+        💬 메시지
+           - "수신 메시지 확인해줘"
+           - "관제센터에 메시지 보내줘"
+
+        💬 사용법 예시:
+        1. 출항 시간을 말씀하시면 최적 경로를 계획합니다
+        2. 권장 시간이 제안되면 O(수락) 또는 X(거절)로 응답하세요
+        3. 경로가 자동으로 저장되고 지도에 표시됩니다
         """

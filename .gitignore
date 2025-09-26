@@ -58,9 +58,21 @@ logs
 .coverage
 htmlcov/
 .pytest_cache/
+test_*.py
+*_test.py
 
 # Project specific
 chatbot_TODO.md
 current_requirements.txt
 *.backup
 convert_obstacles.js
+old_versions/
+assets/images/
+docs/
+tests/
+
+# Temporary files
+*.tmp
+*.bak
+temp/
+tmp/

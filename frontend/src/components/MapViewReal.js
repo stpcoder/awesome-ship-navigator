@@ -14,7 +14,8 @@ const MapViewReal = ({
   onSetGoal,
   routePoints,
   plannedRoute,
-  onMapClick
+  onMapClick,
+  sosAlerts = []  // Accept SOS alerts
 }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -295,6 +296,83 @@ const MapViewReal = ({
       }
     });
   }, [ships, selectedShip?.shipId, mapLoaded]);
+
+  // Display SOS alerts on the map
+  useEffect(() => {
+    if (!mapLoaded || !map.current) return;
+
+    // Remove old SOS markers
+    Object.entries(markersRef.current).forEach(([key, marker]) => {
+      if (key.startsWith('sos-')) {
+        marker.remove();
+        delete markersRef.current[key];
+      }
+    });
+
+    // Add SOS alert markers
+    sosAlerts.forEach(alert => {
+      if (alert.latitude && alert.longitude && alert.status === 'active') {
+        // Create custom SOS marker element with blinking animation
+        const el = document.createElement('div');
+        el.className = 'sos-marker';
+        el.style.width = '40px';
+        el.style.height = '40px';
+        el.style.borderRadius = '50%';
+        el.style.backgroundColor = '#ff0000';
+        el.style.border = '4px solid white';
+        el.style.boxShadow = '0 0 20px rgba(255, 0, 0, 0.8)';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
+        el.style.cursor = 'pointer';
+        el.style.zIndex = '2000';
+        el.innerHTML = '<span style="color: white; font-size: 24px; font-weight: bold;">🆘</span>';
+
+        // Add blinking animation
+        el.style.animation = 'blink 1s infinite';
+
+        // Add CSS animation if not already added
+        if (!document.querySelector('#sos-blink-style')) {
+          const style = document.createElement('style');
+          style.id = 'sos-blink-style';
+          style.innerHTML = `
+            @keyframes blink {
+              0% { opacity: 1; transform: scale(1); }
+              50% { opacity: 0.6; transform: scale(1.1); }
+              100% { opacity: 1; transform: scale(1); }
+            }
+          `;
+          document.head.appendChild(style);
+        }
+
+        // Create popup with SOS details
+        const popup = new mapboxgl.Popup({ offset: 25 })
+          .setHTML(`
+            <div style="padding: 10px; min-width: 200px;">
+              <h3 style="margin: 0 0 10px; color: #ff0000;">🆘 긴급 신호</h3>
+              <p style="margin: 5px 0;"><strong>선박:</strong> ${alert.ship_name || alert.ship_id}</p>
+              <p style="margin: 5px 0;"><strong>유형:</strong> ${
+                alert.emergency_type === 'collision' ? '충돌 위험' :
+                alert.emergency_type === 'fire' ? '화재' :
+                alert.emergency_type === 'engine' ? '엔진 고장' :
+                alert.emergency_type === 'medical' ? '의료 응급' :
+                alert.emergency_type
+              }</p>
+              <p style="margin: 5px 0;"><strong>메시지:</strong> ${alert.message}</p>
+              <p style="margin: 5px 0;"><strong>위치:</strong> ${alert.latitude.toFixed(4)}, ${alert.longitude.toFixed(4)}</p>
+              <p style="margin: 5px 0; color: #666;"><strong>시각:</strong> ${new Date(alert.created_at).toLocaleString('ko-KR')}</p>
+            </div>
+          `);
+
+        const marker = new mapboxgl.Marker(el)
+          .setLngLat([alert.longitude, alert.latitude])
+          .setPopup(popup)
+          .addTo(map.current);
+
+        markersRef.current[`sos-${alert.id}`] = marker;
+      }
+    });
+  }, [sosAlerts, mapLoaded]);
 
   // Update fishing area and docking position markers for selected ship
   useEffect(() => {

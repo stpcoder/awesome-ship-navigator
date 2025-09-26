@@ -29,12 +29,20 @@ function MainDashboard() {
   const [useRealMap, setUseRealMap] = useState(true); // Toggle for real map
   const [shipMapClickHandler, setShipMapClickHandler] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(false); // Dark mode state
+  const [sosAlerts, setSOSAlerts] = useState([]); // SOS alerts
+  const [messages, setMessages] = useState([]); // Chat messages
+  const [unreadCount, setUnreadCount] = useState(0); // Unread message count
+  const [selectedChatShip, setSelectedChatShip] = useState('all'); // Selected ship for chat
+  const [messageInput, setMessageInput] = useState(''); // Chat input
 
   // Fetch initial data
   useEffect(() => {
     fetchShips();
     fetchSensorData();
     fetchRoutes();
+    fetchSOSAlerts();
+    fetchMessages();
+    fetchUnreadCount();
   }, []);
 
   // Toggle dark mode
@@ -60,6 +68,21 @@ function MainDashboard() {
       if (interval) clearInterval(interval);
     };
   }, [showRealtimeShips]);
+
+  // Fetch SOS alerts periodically
+  useEffect(() => {
+    const interval = setInterval(fetchSOSAlerts, 10000); // Update every 10 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch messages periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchMessages();
+      fetchUnreadCount();
+    }, 5000); // Update every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
 
   const fetchShips = async () => {
     try {
@@ -104,6 +127,72 @@ function MainDashboard() {
       setRealtimeData(response.data);
     } catch (error) {
       console.error('Failed to fetch realtime data:', error);
+    }
+  };
+
+  const fetchSOSAlerts = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/sos/active`);
+      setSOSAlerts(response.data);
+    } catch (error) {
+      console.error('Failed to fetch SOS alerts:', error);
+    }
+  };
+
+  const handleSOSUpdate = async (alertId, status) => {
+    try {
+      await axios.patch(`${API_BASE}/api/sos/${alertId}`, { status });
+      fetchSOSAlerts(); // Refresh the list
+    } catch (error) {
+      console.error('Failed to update SOS alert:', error);
+    }
+  };
+
+  const fetchMessages = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/messages`);
+      setMessages(response.data);
+    } catch (error) {
+      console.error('Failed to fetch messages:', error);
+    }
+  };
+
+  const fetchUnreadCount = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/messages/unread-count`);
+      setUnreadCount(response.data.unread_count);
+    } catch (error) {
+      console.error('Failed to fetch unread count:', error);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!messageInput.trim()) return;
+
+    try {
+      await axios.post(`${API_BASE}/api/messages`, {
+        sender_id: 'control_center',
+        recipient_id: selectedChatShip,
+        message: messageInput,
+        message_type: selectedChatShip === 'all' ? 'broadcast' : 'text'
+      });
+
+      setMessageInput('');
+      fetchMessages(); // Refresh messages
+    } catch (error) {
+      console.error('Failed to send message:', error);
+    }
+  };
+
+  const markMessagesAsRead = async (messageIds) => {
+    try {
+      await axios.patch(`${API_BASE}/api/messages/mark-read`, {
+        message_ids: messageIds
+      });
+      fetchMessages();
+      fetchUnreadCount();
+    } catch (error) {
+      console.error('Failed to mark messages as read:', error);
     }
   };
 
@@ -240,6 +329,7 @@ function MainDashboard() {
               routePoints={routePoints}
               plannedRoute={plannedRoute}
               onMapClick={shipMapClickHandler}
+              sosAlerts={sosAlerts}  // Pass SOS alerts
             />
           ) : (
             <MapView
@@ -255,6 +345,7 @@ function MainDashboard() {
               showRoutes={showRoutes}
               selectedShip={selectedShip}
               ships={ships}
+              sosAlerts={sosAlerts}  // Pass SOS alerts
             />
           )}
 
@@ -352,6 +443,197 @@ function MainDashboard() {
                 <p>상태: {route.status}</p>
               </div>
             ))}
+          </div>
+
+          <div className="sos-alerts" style={{
+            marginTop: '1rem',
+            padding: '1rem',
+            background: '#fff3cd',
+            borderRadius: '8px',
+            border: '1px solid #ffddaa'
+          }}>
+            <h3 style={{ color: '#d63031' }}>긴급 신호</h3>
+            {sosAlerts.length === 0 ? (
+              <p style={{ color: '#666' }}>현재 긴급 신호가 없습니다</p>
+            ) : (
+              sosAlerts.map(alert => (
+                <div key={alert.id} className="sos-alert-item" style={{
+                  marginBottom: '1rem',
+                  padding: '0.8rem',
+                  background: '#ffeeee',
+                  borderRadius: '6px',
+                  border: '1px solid #ff6b6b'
+                }}>
+                  <div style={{ fontWeight: 'bold', color: '#d63031', marginBottom: '0.5rem' }}>
+                    {alert.ship_name || alert.ship_id}
+                  </div>
+                  <div style={{ fontSize: '0.9rem', marginBottom: '0.3rem' }}>
+                    <strong>유형:</strong> {
+                      alert.emergency_type === 'collision' ? '충돌 위험' :
+                      alert.emergency_type === 'fire' ? '화재' :
+                      alert.emergency_type === 'engine' ? '엔진 고장' :
+                      alert.emergency_type === 'medical' ? '의료 응급' :
+                      alert.emergency_type
+                    }
+                  </div>
+                  <div style={{ fontSize: '0.9rem', marginBottom: '0.3rem' }}>
+                    <strong>메시지:</strong> {alert.message}
+                  </div>
+                  <div style={{ fontSize: '0.9rem', marginBottom: '0.3rem' }}>
+                    <strong>위치:</strong> {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
+                  </div>
+                  <div style={{ fontSize: '0.9rem', marginBottom: '0.5rem', color: '#666' }}>
+                    <strong>시각:</strong> {new Date(alert.created_at).toLocaleString('ko-KR')}
+                  </div>
+                  {alert.status === 'active' && (
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        onClick={() => handleSOSUpdate(alert.id, 'responding')}
+                        style={{
+                          padding: '0.3rem 0.8rem',
+                          background: '#ffeaa7',
+                          border: '1px solid #fdcb6e',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        대응 중
+                      </button>
+                      <button
+                        onClick={() => handleSOSUpdate(alert.id, 'resolved')}
+                        style={{
+                          padding: '0.3rem 0.8rem',
+                          background: '#55efc4',
+                          border: '1px solid #00b894',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        해결됨
+                      </button>
+                    </div>
+                  )}
+                  {alert.status === 'responding' && (
+                    <div style={{
+                      display: 'inline-block',
+                      padding: '0.2rem 0.6rem',
+                      background: '#ffeaa7',
+                      borderRadius: '4px',
+                      fontSize: '0.85rem'
+                    }}>
+                      대응 중
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Chat Panel */}
+          <div style={{
+            marginTop: '1rem',
+            padding: '1rem',
+            background: '#f8f9fa',
+            borderRadius: '8px',
+            border: '1px solid #dee2e6'
+          }}>
+            <h3 style={{ marginBottom: '1rem' }}>채팅 메시지 {unreadCount > 0 && `(${unreadCount} 미읽음)`}</h3>
+
+            {/* Ship selector */}
+            <div style={{ marginBottom: '1rem' }}>
+              <select
+                value={selectedChatShip}
+                onChange={(e) => setSelectedChatShip(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  borderRadius: '4px',
+                  border: '1px solid #ced4da'
+                }}
+              >
+                <option value="all">전체 선박</option>
+                <option value="control_center">관제센터</option>
+                {ships.map(ship => (
+                  <option key={ship.shipId} value={ship.shipId}>
+                    {ship.name || ship.shipId}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Messages display */}
+            <div style={{
+              maxHeight: '300px',
+              overflowY: 'auto',
+              marginBottom: '1rem',
+              padding: '0.5rem',
+              background: 'white',
+              borderRadius: '4px',
+              border: '1px solid #dee2e6'
+            }}>
+              {messages.length === 0 ? (
+                <p style={{ color: '#666', textAlign: 'center' }}>메시지가 없습니다</p>
+              ) : (
+                messages.map(msg => (
+                  <div
+                    key={msg.id}
+                    style={{
+                      marginBottom: '0.5rem',
+                      padding: '0.5rem',
+                      background: msg.sender_id === 'control_center' ? '#e3f2fd' : '#f5f5f5',
+                      borderRadius: '4px',
+                      border: `1px solid ${msg.is_read ? '#e0e0e0' : '#2196f3'}`,
+                      fontWeight: msg.is_read ? 'normal' : 'bold'
+                    }}
+                    onClick={() => !msg.is_read && markMessagesAsRead([msg.id])}
+                  >
+                    <div style={{
+                      fontSize: '0.85rem',
+                      color: '#666',
+                      marginBottom: '0.25rem'
+                    }}>
+                      {msg.sender_name} → {msg.recipient_name}
+                      <span style={{ float: 'right' }}>
+                        {new Date(msg.created_at).toLocaleString('ko-KR')}
+                      </span>
+                    </div>
+                    <div>{msg.message}</div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Message input */}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                type="text"
+                value={messageInput}
+                onChange={(e) => setMessageInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                placeholder="메시지를 입력하세요..."
+                style={{
+                  flex: 1,
+                  padding: '0.5rem',
+                  borderRadius: '4px',
+                  border: '1px solid #ced4da'
+                }}
+              />
+              <button
+                onClick={sendMessage}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                전송
+              </button>
+            </div>
           </div>
         </div>
       </div>

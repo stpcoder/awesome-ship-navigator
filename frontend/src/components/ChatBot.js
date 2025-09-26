@@ -8,7 +8,9 @@ import {
   ShowWeatherModal,
   SendSOSModal,
   SetFishingAreaModal,
-  ListFeaturesModal
+  ListFeaturesModal,
+  ReceiveMessagesModal,
+  SendMessageModal
 } from './FunctionModals';
 
 const ChatBot = () => {
@@ -614,6 +616,16 @@ const ChatBot = () => {
         parameters={modalParameters}
         onFeatureSelect={handleFeatureSelect}
       />
+      <ReceiveMessagesModal
+        isOpen={activeModal === 'receive_messages'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <SendMessageModal
+        isOpen={activeModal === 'send_message'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
 
       {/* Ship Info Panel - Bottom of Phone */}
       {shipInfo && (
@@ -773,13 +785,7 @@ const ChatBot = () => {
               onClick={() => handleFeatureSelect('recommend_departure')}
               className="debug-button"
             >
-              입출항 시간 추천
-            </button>
-            <button
-              onClick={() => handleFeatureSelect('send_plan')}
-              className="debug-button"
-            >
-              계획 전송
+              입출항 계획
             </button>
             <button
               onClick={() => handleFeatureSelect('show_route')}
@@ -810,6 +816,18 @@ const ChatBot = () => {
               className="debug-button"
             >
               기능 목록
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('receive_messages')}
+              className="debug-button"
+            >
+              수신 메시지
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('send_message')}
+              className="debug-button"
+            >
+              메시지 전송
             </button>
           </div>
         )}

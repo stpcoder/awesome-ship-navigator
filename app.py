@@ -16,13 +16,16 @@ from database import (
     get_db, ShipRoute as DBShipRoute, Ship as DBShip,
     ShipRealtimeLocation as DBShipRealtimeLocation,
     CCTVDevice as DBCCTVDevice, LiDARDevice as DBLiDARDevice,
-    WeatherData as DBWeatherData
+    WeatherData as DBWeatherData, SOSAlert as DBSOSAlert,
+    Message as DBMessage
 )
 from models import (
     RouteRequest, RouteResponse, RouteAcceptance, RouteStatus, RouteSegment,
     ShipInfo, CCTVDevice, LiDARDevice, ShipRealtimeLocation, WeatherData,
     ShipDensityGrid, ShipRoute as ShipRouteModel, ShipRealtimeWithRoute,
-    ShipPositionUpdate
+    ShipPositionUpdate, DepartureRouteRequest, ArrivalRouteRequest,
+    SOSRequest, SOSResponse, SOSUpdateStatus,
+    MessageRequest, MessageResponse, MessageMarkRead
 )
 from eum_api_client import EUMAPIClient
 from core_optimizer import (
@@ -30,6 +33,7 @@ from core_optimizer import (
     PIXEL_TO_NM
 )
 from chatbot_service import ChatbotService
+from weather_service import WeatherService
 
 
 app = FastAPI(title="Ship Navigation Optimizer", version="1.0.0")
@@ -50,6 +54,7 @@ route_optimizer = None
 obstacles_polygons = []
 eum_client = None
 chatbot_service = None
+weather_service = None
 
 
 def load_obstacles_from_json(json_file='guryongpo_obstacles_drawn.json'):
@@ -68,7 +73,7 @@ def load_obstacles_from_json(json_file='guryongpo_obstacles_drawn.json'):
 @app.on_event("startup")
 async def startup_event():
     """Initialize optimization components on startup"""
-    global collision_checker, path_adjuster, route_optimizer, obstacles_polygons, eum_client, chatbot_service
+    global collision_checker, path_adjuster, route_optimizer, obstacles_polygons, eum_client, chatbot_service, weather_service
 
     print("🚀 Starting Ship Navigation System...")
 
@@ -116,6 +121,9 @@ async def startup_event():
 
     # Initialize chatbot service
     chatbot_service = ChatbotService()
+
+    # Initialize Weather service
+    weather_service = WeatherService()
 
     # Skip sync_ship_list since we're using hardcoded data now
     # await sync_ship_list()
@@ -181,7 +189,7 @@ def get_existing_ships(db: Session, exclude_ship_id: str = None) -> List[ShipRou
 
     for db_ship in db_ships:
         ship = ShipRoute(
-            name=db_ship.ship_name or db_ship.ship_id,
+            name=db_ship.name or db_ship.ship_id,
             ship_id=db_ship.ship_id,
             start=(db_ship.start_x, db_ship.start_y),
             goal=(db_ship.goal_x, db_ship.goal_y),
@@ -337,7 +345,7 @@ async def accept_route(acceptance: RouteAcceptance, db: Session = Depends(get_db
 
         # Create ship route with original requested time
         ship = ShipRoute(
-            name=db_ship.ship_name,
+            name=db_ship.name,
             ship_id=db_ship.ship_id,
             start=(db_ship.start_x, db_ship.start_y),
             goal=(db_ship.goal_x, db_ship.goal_y),
@@ -393,7 +401,7 @@ async def get_all_ships(db: Session = Depends(get_db)):
         current_position = None
         if db_ship.status in ['active', 'accepted']:
             ship = ShipRoute(
-                name=db_ship.ship_name,
+                name=db_ship.name,
                 ship_id=db_ship.ship_id,
                 start=(db_ship.start_x, db_ship.start_y),
                 goal=(db_ship.goal_x, db_ship.goal_y),
@@ -437,7 +445,7 @@ async def get_ship_status(ship_id: str, db: Session = Depends(get_db)):
     current_position = None
     if db_ship.status in ['active', 'accepted']:
         ship = ShipRoute(
-            name=db_ship.ship_name,
+            name=db_ship.name,
             ship_id=db_ship.ship_id,
             start=(db_ship.start_x, db_ship.start_y),
             goal=(db_ship.goal_x, db_ship.goal_y),
@@ -854,7 +862,7 @@ async def get_realtime_with_routes(db: Session = Depends(get_db)):
 
                 # Calculate where the ship should be based on the plan
                 ship_route = ShipRoute(
-                    name=route.ship_name,
+                    name=ship.name if ship else route.ship_id,
                     ship_id=route.ship_id,
                     start=(route.start_x, route.start_y),
                     goal=(route.goal_x, route.goal_y),
@@ -928,6 +936,7 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
     global chatbot_service
 
     message = request.get("message", "")
+    session_data = request.get("session", {})
 
     if not chatbot_service:
         # Fallback if service not initialized
@@ -940,8 +949,220 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
     # Process with ChatGPT
     result = chatbot_service.process_text(message)
 
-    # Add database context for specific functions
+    # Handle weather request
     if result["function"] == "show_weather":
+        # Get weather from OpenWeather API
+        weather_data = await weather_service.get_current_weather()
+        weather_message = weather_service.format_weather_message(weather_data)
+
+        return {
+            "function": "weather",
+            "message": weather_message,
+            "weather_data": weather_data,
+            "parameters": {}
+        }
+
+    # Handle departure/arrival route planning
+    elif result["function"] == "recommend_departure":
+        params = result.get("parameters", {})
+
+        # Check if we need clarification for direction only
+        if params.get("type") == "unknown":
+            # Need to clarify departure vs arrival
+            return {
+                "function": "clarification",
+                "message": "출항하실 건가요, 입항하실 건가요?\n\n🚢 출항: 정박지 → 어장\n⚓ 입항: 어장 → 정박지",
+                "parameters": {"waiting_for": "direction"},
+                "session": {"previous_message": message}
+            }
+
+        # We have direction, proceed with route planning
+        route_type = params.get("type")
+        preferred_time = params.get("preferred_time")
+
+        # If this is a response to clarification, merge with session data
+        if session_data.get("direction"):
+            route_type = session_data.get("direction")
+
+        # Parse time preference - default to now if not specified
+        user_departure_time = 0  # Default to now
+        if preferred_time:
+            import re
+            if preferred_time == "now" or "지금" in str(preferred_time):
+                user_departure_time = 0
+            elif "분" in str(preferred_time):
+                # Extract minutes
+                minutes = re.findall(r'\d+', str(preferred_time))
+                if minutes:
+                    user_departure_time = float(minutes[0])  # Already in minutes
+            elif "h" in str(preferred_time) or "시간" in str(preferred_time):
+                # Extract hours
+                hours = re.findall(r'\d+', str(preferred_time))
+                if hours:
+                    user_departure_time = float(hours[0]) * 60  # Convert to minutes
+
+        # Get ship
+        ship = db.query(DBShip).first()  # Get first ship or specific ship based on context
+
+        if ship and route_type in ["departure", "arrival"]:
+            endpoint = f"/api/route/{route_type}"
+
+            # Always calculate optimal time first
+            import httpx
+            async with httpx.AsyncClient() as client:
+                # First, get optimal time
+                optimal_response = await client.post(
+                    f"http://localhost:8000{endpoint}",
+                    json={
+                        "ship_id": ship.ship_id,
+                        "departure_time": user_departure_time,
+                        "flexible_time": True  # Always get optimal time
+                    }
+                )
+
+            if optimal_response.status_code == 200:
+                optimal_route_data = optimal_response.json()
+                direction = "출항" if route_type == "departure" else "입항"
+
+                # Compare user time vs optimal time
+                optimal_time = optimal_route_data['departure_time']
+                user_time_str = "지금 바로" if user_departure_time == 0 else f"{user_departure_time:.0f}분 후"
+                optimal_time_str = "지금 바로" if optimal_time == 0 else f"{optimal_time:.0f}분 후"
+
+                # Check if times are different enough to suggest optimization
+                time_difference = abs(optimal_time - user_departure_time)
+
+                if time_difference > 5:  # If more than 5 minutes difference
+                    # Suggest optimal time
+                    message = f"""
+                    {user_time_str} {direction}을 계획하셨습니다.
+
+                    🔄 최적 시간 분석 결과:
+                    ⏰ 권장 출발: {optimal_time_str}
+                    ⚡ 이점: 교통량 감소, 대기시간 단축
+
+                    📍 경로 정보:
+                    출발: {optimal_route_data['from']['type']}
+                    도착: {optimal_route_data['to']['type']}
+                    거리: {optimal_route_data['distance_nm']:.1f} 해리
+
+                    권장 시간으로 계획을 수정하시겠습니까?
+                    """
+
+                    return {
+                        "function": "route_suggestion",
+                        "message": message,
+                        "optimal_route": optimal_route_data,
+                        "user_time": user_departure_time,
+                        "optimal_time": optimal_time,
+                        "needs_confirmation": True,
+                        "ship_id": ship.ship_id,
+                        "session": {
+                            "pending_route": optimal_route_data,
+                            "user_departure_time": user_departure_time,
+                            "ship_id": ship.ship_id,
+                            "route_type": route_type
+                        }
+                    }
+                else:
+                    # Times are similar, just proceed with user's time
+                    message = f"""
+                    {user_time_str} {direction} 경로를 계획했습니다.
+
+                    📍 출발: {optimal_route_data['from']['type']}
+                    📍 도착: {optimal_route_data['to']['type']}
+                    ⛵ 속도: {optimal_route_data['speed_knots']:.1f} knots
+                    📏 거리: {optimal_route_data['distance_nm']:.1f} 해리
+
+                    ✅ 경로가 DB에 저장되었습니다.
+                    🗺️ 지도에서 경로를 확인하세요.
+                    """
+
+                    return {
+                        "function": "route_confirmed",
+                        "message": message,
+                        "route_data": optimal_route_data,
+                        "needs_confirmation": False,
+                        "ship_id": ship.ship_id,
+                        "show_map": True
+                    }
+            else:
+                direction = "출항" if route_type == "departure" else "입항"
+                result["message"] = f"{direction} 경로 계획에 실패했습니다."
+
+    # Handle user confirmation response (YES - use optimal time)
+    elif any(word in message.lower() for word in ["네", "좋아", "할게", "예", "ok", "yes"]):
+        # Check if there's a pending route in session
+        if session_data.get("pending_route"):
+            ship_id = session_data.get("ship_id")
+            route_data = session_data.get("pending_route")
+
+            # Route is already saved in DB with optimal time
+            db_route = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
+            if db_route:
+                db_route.status = 'confirmed'
+                db.commit()
+
+            result["message"] = "✅ 최적 시간으로 경로가 확정되었습니다.\n🗺️ 지도로 이동하여 경로를 확인하세요."
+            result["function"] = "route_confirmed"
+            result["route_data"] = route_data
+            result["show_map"] = True  # Signal to show map
+        else:
+            result["message"] = "확인할 경로가 없습니다. 먼저 출항/입항 계획을 세워주세요."
+
+    # Handle user rejection response (NO - use original time)
+    elif any(word in message.lower() for word in ["아니", "안", "no", "원래"]):
+        # Check if there's a pending route
+        if session_data.get("pending_route") and session_data.get("user_departure_time") is not None:
+            ship_id = session_data.get("ship_id")
+            route_type = session_data.get("route_type")
+            user_time = session_data.get("user_departure_time")
+            endpoint = f"/api/route/{route_type}"
+
+            # Re-plan with user's original time
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"http://localhost:8000{endpoint}",
+                    json={
+                        "ship_id": ship_id,
+                        "departure_time": user_time,
+                        "flexible_time": False  # Use exact time
+                    }
+                )
+
+            if response.status_code == 200:
+                route_data = response.json()
+                direction = "출항" if route_type == "departure" else "입항"
+                time_desc = "지금 바로" if user_time == 0 else f"{user_time:.0f}분 후"
+
+                # Update route status to confirmed with user's time
+                db_route = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
+                if db_route:
+                    db_route.status = 'confirmed'
+                    db_route.optimization_mode = 'user_time'
+                    db.commit()
+
+                result["message"] = f"""
+                ✅ 원래 시간대로 {direction} 경로를 계획했습니다.
+
+                ⏰ 출발: {time_desc}
+                📍 경로: {route_data['from']['type']} → {route_data['to']['type']}
+                ⛵ 속도: {route_data['speed_knots']:.1f} knots
+                📏 거리: {route_data['distance_nm']:.1f} 해리
+
+                🗺️ 지도로 이동하여 경로를 확인하세요.
+                """
+                result["function"] = "route_confirmed"
+                result["route_data"] = route_data
+                result["show_map"] = True
+            else:
+                result["message"] = "경로 재계획에 실패했습니다."
+        else:
+            result["message"] = "거부할 경로가 없습니다. 먼저 출항/입항 계획을 세워주세요."
+
+    # Add database context for specific functions
+    elif result["function"] == "show_weather":
         weather = db.query(DBWeatherData).first()
         if weather:
             result["parameters"]["weather_data"] = {
@@ -988,6 +1209,615 @@ async def root():
             "/docs"
         ]
     }
+
+
+# Coordinate conversion functions (matching frontend MapViewReal.js)
+MAP_BOUNDS = {
+    "topLeft": {"lat": 35.97, "lng": 129.54},  # Top-left corner
+    "bottomRight": {"lat": 35.88, "lng": 129.62}  # Bottom-right corner
+}
+
+def lat_lng_to_pixel(lat: float, lng: float) -> tuple:
+    """Convert latitude/longitude to pixel coordinates (0-2000, 0-1400)"""
+    lat_range = MAP_BOUNDS["topLeft"]["lat"] - MAP_BOUNDS["bottomRight"]["lat"]
+    lng_range = MAP_BOUNDS["bottomRight"]["lng"] - MAP_BOUNDS["topLeft"]["lng"]
+
+    x = ((lng - MAP_BOUNDS["topLeft"]["lng"]) / lng_range) * 2000
+    y = ((MAP_BOUNDS["topLeft"]["lat"] - lat) / lat_range) * 1400
+
+    return (x, y)
+
+def pixel_to_lat_lng(x: float, y: float) -> dict:
+    """Convert pixel coordinates to latitude/longitude"""
+    lat_range = MAP_BOUNDS["topLeft"]["lat"] - MAP_BOUNDS["bottomRight"]["lat"]
+    lng_range = MAP_BOUNDS["bottomRight"]["lng"] - MAP_BOUNDS["topLeft"]["lng"]
+
+    lat = MAP_BOUNDS["topLeft"]["lat"] - (y / 1400) * lat_range
+    lng = MAP_BOUNDS["topLeft"]["lng"] + (x / 2000) * lng_range
+
+    return {"lat": lat, "lng": lng}
+
+
+@app.post("/api/route/departure")
+async def plan_departure_route(
+    request: DepartureRouteRequest,
+    db: Session = Depends(get_db)
+):
+    """Plan route from docking to fishing area (출항)"""
+    ship_id = request.ship_id
+    departure_time = request.departure_time
+    flexible_time = request.flexible_time
+
+    # Get ship information
+    ship = db.query(DBShip).filter(DBShip.ship_id == ship_id).first()
+    if not ship:
+        raise HTTPException(status_code=404, detail=f"Ship {ship_id} not found")
+
+    if not ship.docking_lat or not ship.fishing_area_lat:
+        raise HTTPException(status_code=400, detail="Ship doesn't have docking or fishing area defined")
+
+    # Convert coordinates to pixels
+    start_pixel = lat_lng_to_pixel(ship.docking_lat, ship.docking_lng)
+    goal_pixel = lat_lng_to_pixel(ship.fishing_area_lat, ship.fishing_area_lng)
+
+    # Get existing ships for collision avoidance
+    existing_ships = get_existing_ships(db, exclude_ship_id=ship_id)
+
+    # Find initial path avoiding static obstacles
+    initial_path = path_adjuster.find_initial_path(start_pixel, goal_pixel)
+
+    if not initial_path:
+        raise HTTPException(status_code=400, detail="No valid path found")
+
+    # Create ship route
+    new_ship = ShipRoute(
+        name=f"{ship.name}_departure",
+        ship_id=ship_id,
+        start=start_pixel,
+        goal=goal_pixel,
+        path=initial_path,
+        departure_time=departure_time or 0,
+        speed_knots=ship.speed if hasattr(ship, 'speed') else 10.0
+    )
+    new_ship.path_length_pixels = route_optimizer.calculate_path_length(initial_path)
+    new_ship.calculate_timestamps()
+
+    # Optimize with flexible time if allowed
+    if flexible_time:
+        optimized_route = route_optimizer.optimize_route_flexible_time(
+            new_ship, existing_ships,
+            time_window_start=0,
+            time_window_end=1440  # 24 hours in minutes
+        )
+    else:
+        optimized_route = route_optimizer.optimize_route_fixed_time(
+            new_ship, existing_ships
+        )
+
+    # Convert path to lat/lng
+    path_lat_lng = []
+    for point in optimized_route.path:
+        lat_lng = pixel_to_lat_lng(point[0], point[1])
+        path_lat_lng.append({
+            "lat": lat_lng["lat"],
+            "lng": lat_lng["lng"],
+            "pixel": {"x": point[0], "y": point[1]}
+        })
+
+    # Save to database if requested
+    save_to_db = True  # Always save to DB for playback
+    if save_to_db:
+        # Remove existing route for this ship
+        existing = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
+        if existing:
+            db.delete(existing)
+
+        # Create new route in DB
+        db_route = DBShipRoute(
+            ship_id=ship_id,
+            start_lat=ship.docking_lat,
+            start_lng=ship.docking_lng,
+            goal_lat=ship.fishing_area_lat,
+            goal_lng=ship.fishing_area_lng,
+            path=json.dumps(optimized_route.path),
+            actual_departure=optimized_route.departure_time,
+            recommended_departure=optimized_route.departure_time,
+            speed_knots=optimized_route.speed_knots,
+            path_length_pixels=optimized_route.path_length_pixels,
+            path_length_nm=optimized_route.path_length_nm,
+            speeds=json.dumps([optimized_route.speed_knots] * len(optimized_route.path)),
+            status='planned',
+            optimization_mode='flexible' if flexible_time else 'fixed'
+        )
+        db.add(db_route)
+        db.commit()
+
+    return {
+        "success": True,
+        "ship_id": ship_id,
+        "ship_name": ship.name,
+        "route_type": "departure",
+        "from": {"lat": ship.docking_lat, "lng": ship.docking_lng, "type": "docking"},
+        "to": {"lat": ship.fishing_area_lat, "lng": ship.fishing_area_lng, "type": "fishing"},
+        "path": path_lat_lng,
+        "path_points": optimized_route.path,  # For frontend display
+        "departure_time": optimized_route.departure_time,
+        "recommended_departure": optimized_route.departure_time,
+        "arrival_time": optimized_route.timestamps[-1] if optimized_route.timestamps else None,
+        "speed_knots": optimized_route.speed_knots,
+        "distance_nm": optimized_route.path_length_nm,
+        "total_distance_nm": optimized_route.path_length_nm,
+        "flexible_time": flexible_time,
+        "optimization_type": "flexible" if flexible_time else "fixed",
+        "saved_to_db": save_to_db
+    }
+
+
+@app.post("/api/route/arrival")
+async def plan_arrival_route(
+    request: ArrivalRouteRequest,
+    db: Session = Depends(get_db)
+):
+    """Plan route from fishing area to docking (입항)"""
+    ship_id = request.ship_id
+    departure_time = request.departure_time
+    flexible_time = request.flexible_time
+
+    # Get ship information
+    ship = db.query(DBShip).filter(DBShip.ship_id == ship_id).first()
+    if not ship:
+        raise HTTPException(status_code=404, detail=f"Ship {ship_id} not found")
+
+    if not ship.docking_lat or not ship.fishing_area_lat:
+        raise HTTPException(status_code=400, detail="Ship doesn't have docking or fishing area defined")
+
+    # Convert coordinates to pixels (reverse of departure)
+    start_pixel = lat_lng_to_pixel(ship.fishing_area_lat, ship.fishing_area_lng)
+    goal_pixel = lat_lng_to_pixel(ship.docking_lat, ship.docking_lng)
+
+    # Get existing ships for collision avoidance
+    existing_ships = get_existing_ships(db, exclude_ship_id=ship_id)
+
+    # Find initial path avoiding static obstacles
+    initial_path = path_adjuster.find_initial_path(start_pixel, goal_pixel)
+
+    if not initial_path:
+        raise HTTPException(status_code=400, detail="No valid path found")
+
+    # Create ship route
+    new_ship = ShipRoute(
+        name=f"{ship.name}_arrival",
+        ship_id=ship_id,
+        start=start_pixel,
+        goal=goal_pixel,
+        path=initial_path,
+        departure_time=departure_time or 0,
+        speed_knots=ship.speed if hasattr(ship, 'speed') else 10.0
+    )
+    new_ship.path_length_pixels = route_optimizer.calculate_path_length(initial_path)
+    new_ship.calculate_timestamps()
+
+    # Optimize with flexible time if allowed
+    if flexible_time:
+        optimized_route = route_optimizer.optimize_route_flexible_time(
+            new_ship, existing_ships,
+            time_window_start=0,
+            time_window_end=1440
+        )
+    else:
+        optimized_route = route_optimizer.optimize_route_fixed_time(
+            new_ship, existing_ships
+        )
+
+    # Convert path to lat/lng
+    path_lat_lng = []
+    for point in optimized_route.path:
+        lat_lng = pixel_to_lat_lng(point[0], point[1])
+        path_lat_lng.append({
+            "lat": lat_lng["lat"],
+            "lng": lat_lng["lng"],
+            "pixel": {"x": point[0], "y": point[1]}
+        })
+
+    # Save to database if requested
+    save_to_db = True  # Always save to DB for playback
+    if save_to_db:
+        # Remove existing route for this ship
+        existing = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
+        if existing:
+            db.delete(existing)
+
+        # Create new route in DB
+        db_route = DBShipRoute(
+            ship_id=ship_id,
+            start_lat=ship.fishing_area_lat,
+            start_lng=ship.fishing_area_lng,
+            goal_lat=ship.docking_lat,
+            goal_lng=ship.docking_lng,
+            path=json.dumps(optimized_route.path),
+            actual_departure=optimized_route.departure_time,
+            recommended_departure=optimized_route.departure_time,
+            speed_knots=optimized_route.speed_knots,
+            path_length_pixels=optimized_route.path_length_pixels,
+            path_length_nm=optimized_route.path_length_nm,
+            speeds=json.dumps([optimized_route.speed_knots] * len(optimized_route.path)),
+            status='planned',
+            optimization_mode='flexible' if flexible_time else 'fixed'
+        )
+        db.add(db_route)
+        db.commit()
+
+    return {
+        "success": True,
+        "ship_id": ship_id,
+        "ship_name": ship.name,
+        "route_type": "arrival",
+        "from": {"lat": ship.fishing_area_lat, "lng": ship.fishing_area_lng, "type": "fishing"},
+        "to": {"lat": ship.docking_lat, "lng": ship.docking_lng, "type": "docking"},
+        "path": path_lat_lng,
+        "path_points": optimized_route.path,  # For frontend display
+        "departure_time": optimized_route.departure_time,
+        "recommended_departure": optimized_route.departure_time,
+        "arrival_time": optimized_route.timestamps[-1] if optimized_route.timestamps else None,
+        "speed_knots": optimized_route.speed_knots,
+        "distance_nm": optimized_route.path_length_nm,
+        "total_distance_nm": optimized_route.path_length_nm,
+        "flexible_time": flexible_time,
+        "optimization_type": "flexible" if flexible_time else "fixed",
+        "saved_to_db": save_to_db
+    }
+
+
+@app.get("/api/obstacles/locations")
+async def get_obstacle_locations(db: Session = Depends(get_db)):
+    """Get all fishing areas and docking positions as obstacles"""
+
+    ships = db.query(DBShip).all()
+
+    fishing_areas = []
+    docking_areas = []
+
+    for ship in ships:
+        if ship.fishing_area_lat and ship.fishing_area_lng:
+            pixel = lat_lng_to_pixel(ship.fishing_area_lat, ship.fishing_area_lng)
+            fishing_areas.append({
+                "ship_name": ship.name,
+                "lat": ship.fishing_area_lat,
+                "lng": ship.fishing_area_lng,
+                "pixel": {"x": pixel[0], "y": pixel[1]}
+            })
+
+        if ship.docking_lat and ship.docking_lng:
+            pixel = lat_lng_to_pixel(ship.docking_lat, ship.docking_lng)
+            docking_areas.append({
+                "ship_name": ship.name,
+                "lat": ship.docking_lat,
+                "lng": ship.docking_lng,
+                "pixel": {"x": pixel[0], "y": pixel[1]}
+            })
+
+    return {
+        "fishing_areas": fishing_areas,
+        "docking_areas": docking_areas,
+        "total_obstacles": len(fishing_areas) + len(docking_areas)
+    }
+
+
+# ================ SOS Emergency Endpoints ================
+
+@app.post("/api/sos", response_model=SOSResponse)
+async def create_sos_alert(
+    request: SOSRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new SOS emergency alert"""
+
+    # Get ship information
+    ship = db.query(DBShip).filter(DBShip.ship_id == request.ship_id).first()
+
+    # Create new SOS alert
+    sos_alert = DBSOSAlert(
+        ship_id=request.ship_id,
+        ship_name=ship.name if ship else request.ship_id,
+        emergency_type=request.emergency_type,
+        message=request.message,
+        latitude=request.latitude,
+        longitude=request.longitude,
+        status='active'
+    )
+
+    db.add(sos_alert)
+    db.commit()
+    db.refresh(sos_alert)
+
+    return SOSResponse(
+        id=sos_alert.id,
+        ship_id=sos_alert.ship_id,
+        ship_name=sos_alert.ship_name,
+        emergency_type=sos_alert.emergency_type,
+        message=sos_alert.message,
+        latitude=sos_alert.latitude,
+        longitude=sos_alert.longitude,
+        status=sos_alert.status,
+        created_at=sos_alert.created_at,
+        resolved_at=sos_alert.resolved_at
+    )
+
+
+@app.get("/api/sos", response_model=List[SOSResponse])
+async def get_all_sos_alerts(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get all SOS alerts, optionally filtered by status"""
+
+    query = db.query(DBSOSAlert)
+
+    if status:
+        query = query.filter(DBSOSAlert.status == status)
+
+    alerts = query.order_by(DBSOSAlert.created_at.desc()).all()
+
+    return [
+        SOSResponse(
+            id=alert.id,
+            ship_id=alert.ship_id,
+            ship_name=alert.ship_name,
+            emergency_type=alert.emergency_type,
+            message=alert.message,
+            latitude=alert.latitude,
+            longitude=alert.longitude,
+            status=alert.status,
+            created_at=alert.created_at,
+            resolved_at=alert.resolved_at
+        )
+        for alert in alerts
+    ]
+
+
+@app.get("/api/sos/active", response_model=List[SOSResponse])
+async def get_active_sos_alerts(db: Session = Depends(get_db)):
+    """Get all active SOS alerts"""
+
+    alerts = db.query(DBSOSAlert).filter(
+        DBSOSAlert.status == 'active'
+    ).order_by(DBSOSAlert.created_at.desc()).all()
+
+    return [
+        SOSResponse(
+            id=alert.id,
+            ship_id=alert.ship_id,
+            ship_name=alert.ship_name,
+            emergency_type=alert.emergency_type,
+            message=alert.message,
+            latitude=alert.latitude,
+            longitude=alert.longitude,
+            status=alert.status,
+            created_at=alert.created_at,
+            resolved_at=alert.resolved_at
+        )
+        for alert in alerts
+    ]
+
+
+@app.patch("/api/sos/{alert_id}", response_model=SOSResponse)
+async def update_sos_status(
+    alert_id: int,
+    status_update: SOSUpdateStatus,
+    db: Session = Depends(get_db)
+):
+    """Update the status of a SOS alert"""
+
+    alert = db.query(DBSOSAlert).filter(DBSOSAlert.id == alert_id).first()
+
+    if not alert:
+        raise HTTPException(status_code=404, detail="SOS alert not found")
+
+    alert.status = status_update.status
+
+    if status_update.status == 'resolved':
+        alert.resolved_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(alert)
+
+    return SOSResponse(
+        id=alert.id,
+        ship_id=alert.ship_id,
+        ship_name=alert.ship_name,
+        emergency_type=alert.emergency_type,
+        message=alert.message,
+        latitude=alert.latitude,
+        longitude=alert.longitude,
+        status=alert.status,
+        created_at=alert.created_at,
+        resolved_at=alert.resolved_at
+    )
+
+
+@app.delete("/api/sos/{alert_id}")
+async def delete_sos_alert(
+    alert_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a SOS alert"""
+
+    alert = db.query(DBSOSAlert).filter(DBSOSAlert.id == alert_id).first()
+
+    if not alert:
+        raise HTTPException(status_code=404, detail="SOS alert not found")
+
+    db.delete(alert)
+    db.commit()
+
+    return {"message": "SOS alert deleted successfully"}
+
+
+# ================ Chat Message Endpoints ================
+
+@app.post("/api/messages", response_model=MessageResponse)
+async def send_message(
+    request: MessageRequest,
+    db: Session = Depends(get_db)
+):
+    """Send a chat message"""
+
+    # Get sender name
+    sender_name = "관제센터" if request.sender_id == "control_center" else request.sender_id
+    if request.sender_id != "control_center":
+        ship = db.query(DBShip).filter(DBShip.ship_id == request.sender_id).first()
+        if ship:
+            sender_name = ship.name or ship.ship_id
+
+    # Get recipient name
+    recipient_name = "전체" if request.recipient_id == "all" else "관제센터" if request.recipient_id == "control_center" else request.recipient_id
+    if request.recipient_id not in ["all", "control_center"]:
+        ship = db.query(DBShip).filter(DBShip.ship_id == request.recipient_id).first()
+        if ship:
+            recipient_name = ship.name or ship.ship_id
+
+    # Create message
+    message = DBMessage(
+        sender_id=request.sender_id,
+        sender_name=sender_name,
+        recipient_id=request.recipient_id,
+        recipient_name=recipient_name,
+        message=request.message,
+        message_type=request.message_type or 'text'
+    )
+
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+
+    return MessageResponse(
+        id=message.id,
+        sender_id=message.sender_id,
+        sender_name=message.sender_name,
+        recipient_id=message.recipient_id,
+        recipient_name=message.recipient_name,
+        message=message.message,
+        message_type=message.message_type,
+        is_read=message.is_read,
+        created_at=message.created_at,
+        read_at=message.read_at
+    )
+
+
+@app.get("/api/messages", response_model=List[MessageResponse])
+async def get_messages(
+    ship_id: Optional[str] = None,
+    unread_only: bool = False,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get messages for a specific ship or control center"""
+
+    from sqlalchemy import or_, and_
+
+    query = db.query(DBMessage)
+
+    if ship_id:
+        # Get messages where ship is sender or recipient
+        query = query.filter(
+            or_(
+                DBMessage.sender_id == ship_id,
+                DBMessage.recipient_id == ship_id,
+                DBMessage.recipient_id == 'all'
+            )
+        )
+    else:
+        # Get messages for control center
+        query = query.filter(
+            or_(
+                DBMessage.recipient_id == 'control_center',
+                DBMessage.sender_id == 'control_center',
+                DBMessage.recipient_id == 'all'
+            )
+        )
+
+    if unread_only:
+        query = query.filter(DBMessage.is_read == False)
+
+    messages = query.order_by(DBMessage.created_at.desc()).limit(limit).all()
+
+    return [
+        MessageResponse(
+            id=msg.id,
+            sender_id=msg.sender_id,
+            sender_name=msg.sender_name,
+            recipient_id=msg.recipient_id,
+            recipient_name=msg.recipient_name,
+            message=msg.message,
+            message_type=msg.message_type,
+            is_read=msg.is_read,
+            created_at=msg.created_at,
+            read_at=msg.read_at
+        )
+        for msg in messages
+    ]
+
+
+@app.get("/api/messages/unread-count")
+async def get_unread_count(
+    ship_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get count of unread messages"""
+
+    from sqlalchemy import or_
+
+    query = db.query(DBMessage).filter(DBMessage.is_read == False)
+
+    if ship_id:
+        query = query.filter(
+            or_(
+                DBMessage.recipient_id == ship_id,
+                DBMessage.recipient_id == 'all'
+            )
+        )
+    else:
+        query = query.filter(DBMessage.recipient_id == 'control_center')
+
+    count = query.count()
+
+    return {"unread_count": count}
+
+
+@app.patch("/api/messages/mark-read")
+async def mark_messages_read(
+    request: MessageMarkRead,
+    db: Session = Depends(get_db)
+):
+    """Mark messages as read"""
+
+    messages = db.query(DBMessage).filter(DBMessage.id.in_(request.message_ids)).all()
+
+    for msg in messages:
+        msg.is_read = True
+        msg.read_at = datetime.utcnow()
+
+    db.commit()
+
+    return {"message": f"{len(messages)} messages marked as read"}
+
+
+@app.delete("/api/messages/{message_id}")
+async def delete_message(
+    message_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a message"""
+
+    message = db.query(DBMessage).filter(DBMessage.id == message_id).first()
+
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    db.delete(message)
+    db.commit()
+
+    return {"message": "Message deleted successfully"}
 
 
 if __name__ == "__main__":
