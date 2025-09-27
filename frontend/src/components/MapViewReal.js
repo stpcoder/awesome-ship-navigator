@@ -95,7 +95,7 @@ const MapViewReal = ({
   const calculateShipClusters = useCallback((ships) => {
     const clusters = [];
     const processed = new Set();
-    const maxDistance = 1000; // Increased to 1000 meters radius for clustering
+    const maxDistance = 500; // 500 meters radius for clustering
 
     console.log('Calculating clusters for', ships.length, 'ships');
 
@@ -133,43 +133,44 @@ const MapViewReal = ({
           cluster.ships.push(otherShip);
           cluster.indices.push(otherIndex);
           processed.add(otherIndex);
-
-          // Update cluster center (centroid) - handle both formats
-          const totalLat = cluster.ships.reduce((sum, s) => sum + (s.latitude || s.lati || 0), 0);
-          const totalLng = cluster.ships.reduce((sum, s) => sum + (s.longitude || s.longi || 0), 0);
-          cluster.center.lat = totalLat / cluster.ships.length;
-          cluster.center.lng = totalLng / cluster.ships.length;
         }
       });
 
-      // Include both single ships and clusters
-      if (cluster.ships.length === 1) {
-        // For single ships, create a small density circle
-        cluster.radius = 200; // 200m radius for single ships
-        clusters.push(cluster);
-        processed.add(index);
-      } else if (cluster.ships.length > 1) {
-        // Calculate cluster radius based on furthest ship
-        let maxDist = 0;
-        cluster.ships.forEach(s => {
-          const shipLat = s.latitude || s.lati;
-          const shipLng = s.longitude || s.longi;
-          const dist = calculateDistance(
-            cluster.center.lat,
-            cluster.center.lng,
-            shipLat,
-            shipLng
-          );
-          maxDist = Math.max(maxDist, dist);
-        });
-        cluster.radius = Math.max(maxDist + 100, 200); // Add padding and minimum radius
+      if (cluster.ships.length >= 1) {
+        // Update cluster center (centroid)
+        const totalLat = cluster.ships.reduce((sum, s) => sum + (s.latitude || s.lati || 0), 0);
+        const totalLng = cluster.ships.reduce((sum, s) => sum + (s.longitude || s.longi || 0), 0);
+        cluster.center.lat = totalLat / cluster.ships.length;
+        cluster.center.lng = totalLng / cluster.ships.length;
+
+        // Calculate cluster radius based on ship count and distribution
+        if (cluster.ships.length === 1) {
+          // Single ship - small radius
+          cluster.radius = 150;
+        } else {
+          // Multiple ships - calculate based on furthest ship
+          let maxDist = 0;
+          cluster.ships.forEach(s => {
+            const shipLat = s.latitude || s.lati;
+            const shipLng = s.longitude || s.longi;
+            const dist = calculateDistance(
+              cluster.center.lat,
+              cluster.center.lng,
+              shipLat,
+              shipLng
+            );
+            maxDist = Math.max(maxDist, dist);
+          });
+          // Radius grows with more ships
+          cluster.radius = Math.max(maxDist + (cluster.ships.length * 30), 200);
+        }
 
         clusters.push(cluster);
         cluster.indices.forEach(idx => processed.add(idx));
       }
     });
 
-    console.log('Created', clusters.length, 'clusters (including single ships)');
+    console.log('Created', clusters.length, 'clusters');
     return clusters;
   }, [calculateDistance]);
 
@@ -378,67 +379,59 @@ const MapViewReal = ({
       return;
     }
 
-    // Create simple density circles for all ships
-    console.log('DENSITY ENABLED - Creating visualization for ships:', ships);
+    // Create density visualization using clusters
+    console.log('DENSITY ENABLED - Creating cluster visualization');
 
-    // Alternative approach: Create a circle for each ship
-    const shipCircles = ships.map((ship, index) => {
-      const lat = ship.latitude || ship.lati;
-      const lng = ship.longitude || ship.longi;
-
-      if (!lat || !lng) return null;
-
-      console.log(`Ship ${index}: lat=${lat}, lng=${lng}`);
-
-      return {
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [lng, lat]
-        },
-        properties: {
-          radius: 1000, // Increased radius for better visibility
-          shipCount: 1,
-          color: 'rgba(255, 0, 0, 0.4)', // Red with more opacity
-          borderColor: 'rgba(255, 0, 0, 0.8)', // Darker red border
-          strokeWidth: 3
-        }
-      };
-    }).filter(f => f !== null);
-
-    console.log('Created', shipCircles.length, 'ship density circles');
-
-    // Also calculate clusters
+    // Calculate clusters
     const clusters = calculateShipClusters(ships);
     console.log('Clusters created:', clusters);
 
-    // Create GeoJSON for cluster circles (if we want to use clustering)
+    // Create GeoJSON for cluster circles with gradient colors
     const clusterFeatures = clusters.map(cluster => {
-      // Calculate color based on ship count
+      // Calculate color based on ship count (blue -> green -> yellow -> red)
       let color;
       let strokeWidth;
+      let opacity;
       const shipCount = cluster.ships.length;
+
       if (shipCount === 1) {
-        color = 'rgba(0, 200, 0, 0.2)'; // Light green for single ships
+        // Single ship - blue, small
+        color = 'rgba(0, 100, 255, 0.25)'; // Blue
         strokeWidth = 1;
+        opacity = 0.6;
       } else if (shipCount === 2) {
-        color = 'rgba(0, 255, 0, 0.3)'; // Green
+        // 2 ships - cyan
+        color = 'rgba(0, 200, 200, 0.3)'; // Cyan
         strokeWidth = 2;
+        opacity = 0.65;
       } else if (shipCount === 3) {
-        color = 'rgba(128, 255, 0, 0.35)'; // Yellow-green
+        // 3 ships - green
+        color = 'rgba(0, 255, 0, 0.35)'; // Green
         strokeWidth = 2;
+        opacity = 0.7;
       } else if (shipCount === 4) {
-        color = 'rgba(255, 255, 0, 0.4)'; // Yellow
-        strokeWidth = 2;
+        // 4 ships - yellow-green
+        color = 'rgba(150, 255, 0, 0.4)'; // Yellow-green
+        strokeWidth = 2.5;
+        opacity = 0.75;
       } else if (shipCount === 5) {
-        color = 'rgba(255, 128, 0, 0.45)'; // Orange
+        // 5 ships - yellow
+        color = 'rgba(255, 255, 0, 0.45)'; // Yellow
         strokeWidth = 3;
+        opacity = 0.8;
+      } else if (shipCount === 6) {
+        // 6 ships - orange
+        color = 'rgba(255, 150, 0, 0.5)'; // Orange
+        strokeWidth = 3;
+        opacity = 0.85;
       } else {
-        color = 'rgba(255, 0, 0, 0.5)'; // Red
-        strokeWidth = 3;
+        // 7+ ships - red
+        color = 'rgba(255, 0, 0, 0.55)'; // Red
+        strokeWidth = 4;
+        opacity = 0.9;
       }
 
-      console.log(`Cluster at [${cluster.center.lng}, ${cluster.center.lat}] with ${shipCount} ships, radius: ${cluster.radius}m`);
+      console.log(`Cluster at [${cluster.center.lng}, ${cluster.center.lat}] with ${shipCount} ships, radius: ${cluster.radius}m, color: ${color}`);
 
       return {
         type: 'Feature',
@@ -450,16 +443,17 @@ const MapViewReal = ({
           radius: cluster.radius,
           shipCount: shipCount,
           color: color,
-          borderColor: color.replace(/0\.\d+\)/, '0.7)'), // More opaque border
-          strokeWidth: strokeWidth
+          borderColor: color.replace(/0\.\d+\)/, `${Math.min(opacity + 0.2, 1)})`), // Darker border
+          strokeWidth: strokeWidth,
+          opacity: opacity
         }
       };
     });
 
-    // Use simple ship circles instead of clusters for now (for debugging)
+    // Use cluster features instead of individual ship circles
     const geoJsonData = {
       type: 'FeatureCollection',
-      features: shipCircles  // Use simple circles for each ship
+      features: clusterFeatures
     };
 
     console.log('GeoJSON data:', geoJsonData);
@@ -492,15 +486,17 @@ const MapViewReal = ({
               'interpolate',
               ['linear'],
               ['zoom'],
-              10, 30,  // Simplified: fixed pixel size that scales with zoom
-              14, 50,
-              18, 100
+              10, ['/', ['get', 'radius'], 20],  // Scale based on actual radius
+              12, ['/', ['get', 'radius'], 12],
+              14, ['/', ['get', 'radius'], 6],
+              16, ['/', ['get', 'radius'], 3],
+              18, ['/', ['get', 'radius'], 1.5]
             ],
             'circle-color': ['get', 'color'],
             'circle-stroke-color': ['get', 'borderColor'],
             'circle-stroke-width': ['get', 'strokeWidth'],
-            'circle-blur': 0.3,
-            'circle-opacity': 0.7
+            'circle-blur': 0.4,
+            'circle-opacity': ['get', 'opacity']
           }
         });
 
