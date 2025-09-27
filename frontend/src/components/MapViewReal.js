@@ -309,6 +309,17 @@ const MapViewReal = ({
           .addTo(map.current);
 
         markersRef.current[shipId] = marker;
+
+        // Allow clicking the marker to select the ship in UI (if parent provided handler)
+        el.addEventListener('click', () => {
+          try {
+            // Trigger a custom event on window with marker ship identity
+            const event = new CustomEvent('map-ship-marker-click', { detail: { shipId: ship.shipId, devId: ship.devId, id: ship.id } });
+            window.dispatchEvent(event);
+          } catch (e) {
+            console.warn('Failed to dispatch marker click event:', e);
+          }
+        });
       }
     });
   }, [ships, selectedShip, mapLoaded]);

@@ -70,6 +70,36 @@ function MainDashboard() {
     return () => clearInterval(interval);
   }, [isLiveMode]);  // Re-run when Live mode changes
 
+  // Listen for map marker click events to sync selection
+  useEffect(() => {
+    const handler = (e) => {
+      const { shipId, devId, id } = e.detail || {};
+      // Prefer matching by numeric id when available
+      if (typeof id === 'number') {
+        const match = ships.find(s => s.id === id);
+        if (match) {
+          setSelectedShip(match);
+          return;
+        }
+      }
+      if (typeof devId === 'number') {
+        const match = ships.find(s => s.id === devId);
+        if (match) {
+          setSelectedShip(match);
+          return;
+        }
+      }
+      if (shipId) {
+        const match = ships.find(s => String(s.shipId) === String(shipId));
+        if (match) {
+          setSelectedShip(match);
+        }
+      }
+    };
+    window.addEventListener('map-ship-marker-click', handler);
+    return () => window.removeEventListener('map-ship-marker-click', handler);
+  }, [ships]);
+
   // Fetch SOS alerts periodically
   useEffect(() => {
     const interval = setInterval(fetchSOSAlerts, 10000); // Update every 10 seconds
@@ -129,13 +159,29 @@ function MainDashboard() {
     try {
       const endpoint = isLiveMode
         ? `${API_BASE}/api/eum/ships/realtime/live`  // Live API endpoint
-        : `${API_BASE}/api/eum/ships/realtime`;      // Demo endpoint
+        : `${API_BASE}/api/eum/ships/realtime/demo`; // Demo endpoint aligned with DB ship IDs
 
       const response = await axios.get(endpoint);
       console.log(`Fetched realtime data (${isLiveMode ? 'LIVE' : 'DEMO'}):`, response.data.length, 'ships');
       setRealtimeData(response.data);
     } catch (error) {
       console.error('Failed to fetch realtime data:', error);
+    }
+  };
+
+  // Clicking a marker on the map selects the corresponding ship in the left dropdown
+  const handleShipMarkerClick = (markerId) => {
+    // markerId is devId (number) in demo/live endpoints; match against DB ship id
+    const byId = ships.find(s => s.id === markerId);
+    if (byId) {
+      setSelectedShip(byId);
+      return;
+    }
+    // Fallback: try matching string-based shipId
+    const markerIdStr = String(markerId);
+    const byShipId = ships.find(s => String(s.shipId) === markerIdStr);
+    if (byShipId) {
+      setSelectedShip(byShipId);
     }
   };
 
