@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import './ChatBot.css';
 import {
   RecommendDepartureModal,
@@ -8,6 +8,7 @@ import {
   ShowWeatherModal,
   SendSOSModal,
   SetFishingAreaModal,
+  SetDockingPositionModal,
   ListFeaturesModal,
   ReceiveMessagesModal,
   SendMessageModal
@@ -379,7 +380,7 @@ const ChatBot = () => {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({ message: text, session: { ship_id: selectedShip } })
       });
 
       console.log('Server response status:', response.status);
@@ -447,6 +448,17 @@ const ChatBot = () => {
 
   return (
     <div className="chatbot-container">
+      {/* VTS Navigation Button */}
+      <Link to="/" className="vts-nav-button">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="14" y="14" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+        </svg>
+        VTS 시스템
+      </Link>
+
       {/* Ship Selection Panel - Left Side */}
       <div className="ship-selection-panel">
         <h3>내 선박 선택</h3>
@@ -607,6 +619,11 @@ const ChatBot = () => {
       />
       <SetFishingAreaModal
         isOpen={activeModal === 'set_fishing_area'}
+        onClose={() => setActiveModal(null)}
+        parameters={modalParameters}
+      />
+      <SetDockingPositionModal
+        isOpen={activeModal === 'set_docking_position'}
         onClose={() => setActiveModal(null)}
         parameters={modalParameters}
       />
@@ -810,6 +827,12 @@ const ChatBot = () => {
               className="debug-button"
             >
               어장 지정
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('set_docking_position')}
+              className="debug-button"
+            >
+              정박 위치
             </button>
             <button
               onClick={() => handleFeatureSelect('list_features')}

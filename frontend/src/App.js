@@ -8,6 +8,10 @@ import SensorInfo from './components/SensorInfo';
 import RoutePlanner from './components/RoutePlanner';
 import TimeController from './components/TimeController';
 import ChatBot from './components/ChatBot';
+import CCTVVideo from './components/CCTVVideo';
+import LiDARStats from './components/LiDARStats';
+import Emergency from './components/Emergency';
+import Messages from './components/Messages';
 import obstaclesData from './data/obstacles_latlng.json';
 import axios from 'axios';
 
@@ -24,18 +28,30 @@ function MainDashboard() {
   const [plannedRoute, setPlannedRoute] = useState(null);
   const [mapClickMode, setMapClickMode] = useState(null); // 'start' or 'goal'
   const [routePoints, setRoutePoints] = useState({ start: null, goal: null });
-  const [showRealtimeShips, setShowRealtimeShips] = useState(false);
-  const [showRoutes, setShowRoutes] = useState(true);
-  const [useRealMap, setUseRealMap] = useState(true); // Toggle for real map
+  const [showRealtimeShips, setShowRealtimeShips] = useState(true); // Always show realtime ships
+  const [showRoutes, setShowRoutes] = useState(false); // Only show routes for selected ship
+  const [useRealMap, setUseRealMap] = useState(true); // Always use real map
   const [shipMapClickHandler, setShipMapClickHandler] = useState(null);
-  const [isDarkMode, setIsDarkMode] = useState(false); // Dark mode state
+  // Dark mode removed
   const [sosAlerts, setSOSAlerts] = useState([]); // SOS alerts
   const [messages, setMessages] = useState([]); // Chat messages
   const [unreadCount, setUnreadCount] = useState(0); // Unread message count
   const [selectedChatShip, setSelectedChatShip] = useState('all'); // Selected ship for chat
   const [messageInput, setMessageInput] = useState(''); // Chat input
+  const [isLiveMode, setIsLiveMode] = useState(false); // Live/Demo mode toggle
+  const [selectedCCTV, setSelectedCCTV] = useState(null); // Selected CCTV for video display
+  const [selectedCCTVMarker, setSelectedCCTVMarker] = useState(null); // Selected CCTV to show on map
+  const [selectedLiDAR, setSelectedLiDAR] = useState(null); // Selected LiDAR for statistics display
+  const [showCCTVMarkers, setShowCCTVMarkers] = useState(false); // Show CCTV markers on map
+  const [showLiDARMarkers, setShowLiDARMarkers] = useState(false); // Show LiDAR markers on map
+  const [showEntryExitStats, setShowEntryExitStats] = useState(false); // Show entry/exit statistics window
 
-  // Fetch initial data
+  // Always show realtime ships regardless of mode
+  useEffect(() => {
+    setShowRealtimeShips(true);  // Always show realtime ships
+  }, []);
+
+  // Fetch initial data and refresh when Live/Demo mode changes
   useEffect(() => {
     fetchShips();
     fetchSensorData();
@@ -43,31 +59,16 @@ function MainDashboard() {
     fetchSOSAlerts();
     fetchMessages();
     fetchUnreadCount();
-  }, []);
+  }, [isLiveMode]);  // Refetch when mode changes
 
-  // Toggle dark mode
-  useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    } else {
-      document.documentElement.removeAttribute('data-theme');
-    }
-  }, [isDarkMode]);
+  // Dark mode removed - this effect is no longer needed
 
-  // Fetch realtime data only when toggle is on
+  // Always fetch realtime data
   useEffect(() => {
-    let interval;
-    if (showRealtimeShips) {
-      fetchRealtimeData(); // Fetch immediately
-      interval = setInterval(fetchRealtimeData, 5000); // Update every 5 seconds
-    } else {
-      // Clear realtime data when toggle is off
-      setRealtimeData([]);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [showRealtimeShips]);
+    fetchRealtimeData(); // Fetch immediately
+    const interval = setInterval(fetchRealtimeData, 5000); // Update every 5 seconds
+    return () => clearInterval(interval);
+  }, [isLiveMode]);  // Re-run when Live mode changes
 
   // Fetch SOS alerts periodically
   useEffect(() => {
@@ -86,8 +87,12 @@ function MainDashboard() {
 
   const fetchShips = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/api/eum/ships`);
-      console.log('Fetched ships:', response.data);
+      const endpoint = isLiveMode
+        ? `${API_BASE}/api/eum/ships/live`  // Live API endpoint
+        : `${API_BASE}/api/eum/ships`;      // Demo (existing DB) endpoint
+
+      const response = await axios.get(endpoint);
+      console.log(`Fetched ships (${isLiveMode ? 'LIVE' : 'DEMO'}):`, response.data);
       setShips(response.data);
     } catch (error) {
       console.error('Failed to fetch ships:', error);
@@ -122,8 +127,12 @@ function MainDashboard() {
 
   const fetchRealtimeData = async () => {
     try {
-      // Fetch only EUM real-time data, not our planned routes
-      const response = await axios.get(`${API_BASE}/api/eum/ships/realtime`);
+      const endpoint = isLiveMode
+        ? `${API_BASE}/api/eum/ships/realtime/live`  // Live API endpoint
+        : `${API_BASE}/api/eum/ships/realtime`;      // Demo endpoint
+
+      const response = await axios.get(endpoint);
+      console.log(`Fetched realtime data (${isLiveMode ? 'LIVE' : 'DEMO'}):`, response.data.length, 'ships');
       setRealtimeData(response.data);
     } catch (error) {
       console.error('Failed to fetch realtime data:', error);
@@ -264,41 +273,116 @@ function MainDashboard() {
     }
   };
 
+  // Handle sensor selection from SensorInfo component
+  const handleSensorSelect = (type, data) => {
+    if (type === 'cctv-single') {
+      // Show single CCTV marker and select it for video
+      setShowCCTVMarkers(true);
+      setShowLiDARMarkers(false);
+      setSelectedCCTV(data);
+      setSelectedLiDAR(null);
+      setShowEntryExitStats(false);
+    } else if (type === 'lidar-single') {
+      // Show single LiDAR marker and automatically show stats
+      setShowLiDARMarkers(true);
+      setShowCCTVMarkers(false);
+      setSelectedLiDAR(data);
+      setSelectedCCTV(null);
+      setShowEntryExitStats(true);  // Automatically show stats when LiDAR is selected
+    } else if (type === 'clear') {
+      // Clear all sensor markers and hide stats
+      setShowCCTVMarkers(false);
+      setShowLiDARMarkers(false);
+      setSelectedCCTV(null);
+      setSelectedLiDAR(null);
+      setShowEntryExitStats(false);
+    }
+  };
+
   const handleShipMapClickMode = (handler) => {
     setShipMapClickHandler(() => handler);
   };
 
-  const handleSensorSelect = (sensorType, sensorData) => {
-    // This function will be called when a sensor is selected from the dropdown
-    // You can add logic here to display the sensor on the map
-    console.log('Sensor selected:', sensorType, sensorData);
-    // TODO: Add marker to map at sensorData.lat, sensorData.lng
+  // Handle LiDAR selection for stats display
+  const handleLiDARSelect = (lidar) => {
+    console.log('LiDAR selected:', lidar);
+    setSelectedLiDAR(lidar);
   };
 
   return (
     <div className="App">
       <header className="App-header">
-        <h1>🚢 선박 항로 최적화 시스템</h1>
-        <div
-          className={`theme-toggle ${isDarkMode ? 'dark' : ''}`}
-          onClick={() => setIsDarkMode(!isDarkMode)}
-        >
-          <div className="theme-toggle-slider">
-            {isDarkMode ? '🌙' : '☀️'}
-          </div>
-        </div>
-        <Link to="/chatbot" style={{
+        <h1>소규모 항구 통합 관제 시스템</h1>
+        <div style={{
           position: 'absolute',
           right: '20px',
-          padding: '8px 16px',
-          background: 'white',
-          color: '#333',
-          borderRadius: '20px',
-          textDecoration: 'none',
-          fontWeight: '500'
+          display: 'flex',
+          alignItems: 'center',
+          gap: '15px'
         }}>
-          💬 챗봇
-        </Link>
+          {/* Live/Demo Toggle */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: 'rgba(255, 255, 255, 0.1)',
+            borderRadius: '30px',
+            padding: '4px',
+            border: '1px solid rgba(255, 255, 255, 0.2)'
+          }}>
+            <button
+              onClick={() => setIsLiveMode(false)}
+              style={{
+                padding: '6px 14px',
+                background: !isLiveMode ? 'white' : 'transparent',
+                color: !isLiveMode ? '#667eea' : 'white',
+                border: 'none',
+                borderRadius: '20px',
+                fontSize: '13px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease'
+              }}
+            >
+              Demo
+            </button>
+            <button
+              onClick={() => setIsLiveMode(true)}
+              style={{
+                padding: '6px 14px',
+                background: isLiveMode ? 'white' : 'transparent',
+                color: isLiveMode ? '#667eea' : 'white',
+                border: 'none',
+                borderRadius: '20px',
+                fontSize: '13px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease'
+              }}
+            >
+              Live
+              {isLiveMode && (
+                <span style={{
+                  display: 'inline-block',
+                  width: '6px',
+                  height: '6px',
+                  background: '#4ade80',
+                  borderRadius: '50%',
+                  marginLeft: '6px',
+                  animation: 'pulse 2s infinite'
+                }} />
+              )}
+            </button>
+          </div>
+
+
+          {/* AI Chatbot Button */}
+          <Link to="/chatbot" className="chatbot-nav-button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+            </svg>
+            AI 챗봇
+          </Link>
+        </div>
       </header>
 
       <div className="main-container">
@@ -318,36 +402,26 @@ function MainDashboard() {
         </div>
 
         <div className="center-panel">
-          {useRealMap ? (
-            <MapViewReal
-              ships={showRealtimeShips ? realtimeData : []}
-              routes={showRoutes ? routes : []}
-              selectedShip={selectedShip}
-              obstacles={obstaclesData} // Pass obstacle data
-              onSetStart={() => setMapClickMode('start')}
-              onSetGoal={() => setMapClickMode('goal')}
-              routePoints={routePoints}
-              plannedRoute={plannedRoute}
-              onMapClick={shipMapClickHandler}
-              sosAlerts={sosAlerts}  // Pass SOS alerts
-            />
-          ) : (
-            <MapView
-              routes={routes}
-              realtimeData={realtimeData}
-              sensorData={sensorData}
-              currentTime={currentTime}
-              plannedRoute={plannedRoute}
-              onMapClick={handleMapClick}
-              mapClickMode={mapClickMode}
-              routePoints={routePoints}
-              showRealtimeShips={showRealtimeShips}
-              showRoutes={showRoutes}
-              selectedShip={selectedShip}
-              ships={ships}
-              sosAlerts={sosAlerts}  // Pass SOS alerts
-            />
-          )}
+          <MapViewReal
+            ships={realtimeData}  // Always show realtime data
+            routes={selectedShip && !isLiveMode ? routes.filter(r => r.ship_id === selectedShip.ship_id) : []}  // Show routes only for selected ship in Demo mode
+            selectedShip={selectedShip}
+            obstacles={obstaclesData} // Pass obstacle data
+            onSetStart={() => setMapClickMode('start')}
+            onSetGoal={() => setMapClickMode('goal')}
+            routePoints={routePoints}
+            plannedRoute={plannedRoute}
+            onMapClick={shipMapClickHandler}
+            sosAlerts={sosAlerts}  // Pass SOS alerts
+            selectedCCTVMarker={selectedCCTVMarker}  // Pass selected CCTV to show marker
+            selectedCCTV={selectedCCTV}  // Pass currently selected CCTV for filtering
+            onCCTVSelect={setSelectedCCTV}  // Handle CCTV video selection
+            cctvData={sensorData.cctv}  // Pass CCTV data
+            showCCTVMarkers={showCCTVMarkers}  // Control CCTV marker visibility
+            lidarData={sensorData.lidar}  // Pass LiDAR data
+            showLiDARMarkers={showLiDARMarkers}  // Control LiDAR marker visibility
+            onLiDARSelect={handleLiDARSelect}  // Handle LiDAR selection
+          />
 
           <TimeController
             currentTime={currentTime}
@@ -356,59 +430,28 @@ function MainDashboard() {
             onPlayPause={() => setIsPlaying(!isPlaying)}
           />
 
-          <div className="toggle-controls" style={{
-            display: 'flex',
-            gap: '1rem',
-            padding: '1rem',
-            background: '#f5f5f5',
-            borderRadius: '8px',
-            marginTop: '1rem'
-          }}>
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              cursor: 'pointer'
-            }}>
-              <input
-                type="checkbox"
-                checked={showRealtimeShips}
-                onChange={(e) => setShowRealtimeShips(e.target.checked)}
-                style={{ width: '20px', height: '20px' }}
-              />
-              <span style={{ fontWeight: '500' }}>🚢 실시간 선박 위치 표시</span>
-            </label>
+          {/* CCTV Video Display */}
+          {selectedCCTV && (
+            <CCTVVideo
+              cctvId={selectedCCTV.id}
+              cctvName={selectedCCTV.name}
+              onClose={() => {
+                setSelectedCCTV(null);
+                setShowCCTVMarkers(false);
+              }}
+            />
+          )}
 
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              cursor: 'pointer'
-            }}>
-              <input
-                type="checkbox"
-                checked={useRealMap}
-                onChange={(e) => setUseRealMap(e.target.checked)}
-                style={{ width: '20px', height: '20px' }}
-              />
-              <span style={{ fontWeight: '500' }}>🗺️ 실제 지도 사용</span>
-            </label>
-
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              cursor: 'pointer'
-            }}>
-              <input
-                type="checkbox"
-                checked={showRoutes}
-                onChange={(e) => setShowRoutes(e.target.checked)}
-                style={{ width: '20px', height: '20px' }}
-              />
-              <span style={{ fontWeight: '500' }}>🗺️ 계획된 경로 표시</span>
-            </label>
-          </div>
+          {/* LiDAR Statistics Display */}
+          {selectedLiDAR && showEntryExitStats && (
+            <LiDARStats
+              lidar={selectedLiDAR}
+              onClose={() => {
+                setSelectedLiDAR(null);
+                setShowEntryExitStats(false);
+              }}
+            />
+          )}
         </div>
 
         <div className="right-panel">
@@ -418,223 +461,23 @@ function MainDashboard() {
             onPlanRoute={handlePlanRoute}
           />
 
-          <div className="route-info">
-            <h3>경로 정보</h3>
-            {plannedRoute && (
-              <div>
-                <p>선박 ID: {plannedRoute.ship_id}</p>
-                <p>출발 시간: {plannedRoute.recommended_departure?.toFixed(1)} 분</p>
-                <p>도착 시간: {plannedRoute.arrival_time?.toFixed(1)} 분</p>
-                <p>총 거리: {plannedRoute.total_distance_nm?.toFixed(2)} nm</p>
-                <p>최적화 타입: {plannedRoute.optimization_type}</p>
-                {plannedRoute.time_saved_minutes && (
-                  <p>절약 시간: {plannedRoute.time_saved_minutes.toFixed(1)} 분</p>
-                )}
-              </div>
-            )}
-          </div>
 
-          <div className="active-routes">
-            <h3>활성 경로</h3>
-            {routes.filter(r => r.status === 'accepted' || r.status === 'active').map(route => (
-              <div key={route.ship_id} className="route-item">
-                <p>{route.ship_id}</p>
-                <p>모드: {route.optimization_mode}</p>
-                <p>상태: {route.status}</p>
-              </div>
-            ))}
-          </div>
+          <Emergency
+            sosAlerts={sosAlerts}
+            onSOSUpdate={handleSOSUpdate}
+          />
 
-          <div className="sos-alerts" style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            background: '#fff3cd',
-            borderRadius: '8px',
-            border: '1px solid #ffddaa'
-          }}>
-            <h3 style={{ color: '#d63031' }}>긴급 신호</h3>
-            {sosAlerts.length === 0 ? (
-              <p style={{ color: '#666' }}>현재 긴급 신호가 없습니다</p>
-            ) : (
-              sosAlerts.map(alert => (
-                <div key={alert.id} className="sos-alert-item" style={{
-                  marginBottom: '1rem',
-                  padding: '0.8rem',
-                  background: '#ffeeee',
-                  borderRadius: '6px',
-                  border: '1px solid #ff6b6b'
-                }}>
-                  <div style={{ fontWeight: 'bold', color: '#d63031', marginBottom: '0.5rem' }}>
-                    {alert.ship_name || alert.ship_id}
-                  </div>
-                  <div style={{ fontSize: '0.9rem', marginBottom: '0.3rem' }}>
-                    <strong>유형:</strong> {
-                      alert.emergency_type === 'collision' ? '충돌 위험' :
-                      alert.emergency_type === 'fire' ? '화재' :
-                      alert.emergency_type === 'engine' ? '엔진 고장' :
-                      alert.emergency_type === 'medical' ? '의료 응급' :
-                      alert.emergency_type
-                    }
-                  </div>
-                  <div style={{ fontSize: '0.9rem', marginBottom: '0.3rem' }}>
-                    <strong>메시지:</strong> {alert.message}
-                  </div>
-                  <div style={{ fontSize: '0.9rem', marginBottom: '0.3rem' }}>
-                    <strong>위치:</strong> {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
-                  </div>
-                  <div style={{ fontSize: '0.9rem', marginBottom: '0.5rem', color: '#666' }}>
-                    <strong>시각:</strong> {new Date(alert.created_at).toLocaleString('ko-KR')}
-                  </div>
-                  {alert.status === 'active' && (
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        onClick={() => handleSOSUpdate(alert.id, 'responding')}
-                        style={{
-                          padding: '0.3rem 0.8rem',
-                          background: '#ffeaa7',
-                          border: '1px solid #fdcb6e',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '0.85rem'
-                        }}
-                      >
-                        대응 중
-                      </button>
-                      <button
-                        onClick={() => handleSOSUpdate(alert.id, 'resolved')}
-                        style={{
-                          padding: '0.3rem 0.8rem',
-                          background: '#55efc4',
-                          border: '1px solid #00b894',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '0.85rem'
-                        }}
-                      >
-                        해결됨
-                      </button>
-                    </div>
-                  )}
-                  {alert.status === 'responding' && (
-                    <div style={{
-                      display: 'inline-block',
-                      padding: '0.2rem 0.6rem',
-                      background: '#ffeaa7',
-                      borderRadius: '4px',
-                      fontSize: '0.85rem'
-                    }}>
-                      대응 중
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Chat Panel */}
-          <div style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            background: '#f8f9fa',
-            borderRadius: '8px',
-            border: '1px solid #dee2e6'
-          }}>
-            <h3 style={{ marginBottom: '1rem' }}>채팅 메시지 {unreadCount > 0 && `(${unreadCount} 미읽음)`}</h3>
-
-            {/* Ship selector */}
-            <div style={{ marginBottom: '1rem' }}>
-              <select
-                value={selectedChatShip}
-                onChange={(e) => setSelectedChatShip(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  borderRadius: '4px',
-                  border: '1px solid #ced4da'
-                }}
-              >
-                <option value="all">전체 선박</option>
-                <option value="control_center">관제센터</option>
-                {ships.map(ship => (
-                  <option key={ship.shipId} value={ship.shipId}>
-                    {ship.name || ship.shipId}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Messages display */}
-            <div style={{
-              maxHeight: '300px',
-              overflowY: 'auto',
-              marginBottom: '1rem',
-              padding: '0.5rem',
-              background: 'white',
-              borderRadius: '4px',
-              border: '1px solid #dee2e6'
-            }}>
-              {messages.length === 0 ? (
-                <p style={{ color: '#666', textAlign: 'center' }}>메시지가 없습니다</p>
-              ) : (
-                messages.map(msg => (
-                  <div
-                    key={msg.id}
-                    style={{
-                      marginBottom: '0.5rem',
-                      padding: '0.5rem',
-                      background: msg.sender_id === 'control_center' ? '#e3f2fd' : '#f5f5f5',
-                      borderRadius: '4px',
-                      border: `1px solid ${msg.is_read ? '#e0e0e0' : '#2196f3'}`,
-                      fontWeight: msg.is_read ? 'normal' : 'bold'
-                    }}
-                    onClick={() => !msg.is_read && markMessagesAsRead([msg.id])}
-                  >
-                    <div style={{
-                      fontSize: '0.85rem',
-                      color: '#666',
-                      marginBottom: '0.25rem'
-                    }}>
-                      {msg.sender_name} → {msg.recipient_name}
-                      <span style={{ float: 'right' }}>
-                        {new Date(msg.created_at).toLocaleString('ko-KR')}
-                      </span>
-                    </div>
-                    <div>{msg.message}</div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Message input */}
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input
-                type="text"
-                value={messageInput}
-                onChange={(e) => setMessageInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                placeholder="메시지를 입력하세요..."
-                style={{
-                  flex: 1,
-                  padding: '0.5rem',
-                  borderRadius: '4px',
-                  border: '1px solid #ced4da'
-                }}
-              />
-              <button
-                onClick={sendMessage}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                전송
-              </button>
-            </div>
-          </div>
+          <Messages
+            messages={messages}
+            unreadCount={unreadCount}
+            selectedChatShip={selectedChatShip}
+            setSelectedChatShip={setSelectedChatShip}
+            messageInput={messageInput}
+            setMessageInput={setMessageInput}
+            sendMessage={sendMessage}
+            markMessagesAsRead={markMessagesAsRead}
+            ships={ships}
+          />
         </div>
       </div>
     </div>

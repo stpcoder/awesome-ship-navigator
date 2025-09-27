@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
@@ -28,9 +29,8 @@ from models import (
     MessageRequest, MessageResponse, MessageMarkRead
 )
 from eum_api_client import EUMAPIClient
-from core_optimizer import (
-    ShipRoute, CollisionChecker, PathAdjuster, RouteOptimizer,
-    PIXEL_TO_NM
+from core_optimizer_latlng import (
+    ShipRoute, RouteOptimizer
 )
 from chatbot_service import ChatbotService
 from weather_service import WeatherService
@@ -48,24 +48,30 @@ app.add_middleware(
 )
 
 # Global variables for optimization components
-collision_checker = None
-path_adjuster = None
 route_optimizer = None
-obstacles_polygons = []
+obstacles_latlng = []  # Obstacles in lat/lng coordinates
 eum_client = None
 chatbot_service = None
 weather_service = None
 
 
 def load_obstacles_from_json(json_file='guryongpo_obstacles_drawn.json'):
-    """Load obstacles from JSON file"""
+    """Load obstacles from JSON file and convert to lat/lng"""
     with open(json_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     obstacles = []
     for item in data:
-        coords = item['polygon']
-        obstacles.append(Polygon(coords))
+        # Original coordinates are in pixels, convert to lat/lng
+        pixel_coords = item['polygon']
+        latlng_coords = []
+        for x, y in pixel_coords:
+            # Convert from pixel to lat/lng using MAP_ORIGIN as reference
+            # Assuming 1 pixel = ~0.00001 degrees (adjust as needed)
+            lat = MAP_ORIGIN['lat'] - (y * 0.00001)  # Y increases downward
+            lng = MAP_ORIGIN['lng'] + (x * 0.00001)  # X increases rightward
+            latlng_coords.append((lat, lng))
+        obstacles.append(Polygon(latlng_coords))
 
     return obstacles
 
@@ -73,7 +79,7 @@ def load_obstacles_from_json(json_file='guryongpo_obstacles_drawn.json'):
 @app.on_event("startup")
 async def startup_event():
     """Initialize optimization components on startup"""
-    global collision_checker, path_adjuster, route_optimizer, obstacles_polygons, eum_client, chatbot_service, weather_service
+    global route_optimizer, obstacles_latlng, eum_client, chatbot_service, weather_service
 
     print("🚀 Starting Ship Navigation System...")
 
@@ -104,17 +110,13 @@ async def startup_event():
     finally:
         db.close()
 
-    # Load obstacles
-    obstacles_polygons = load_obstacles_from_json()
+    # Load obstacles in lat/lng format
+    obstacles_latlng = load_obstacles_from_json()
 
-    # Initialize components
-    collision_checker = CollisionChecker(safety_distance_nm=0.5)
-
-    grid_width = 2000 // 20 + 1
-    grid_height = 1400 // 20 + 1
-    path_adjuster = PathAdjuster(grid_width, grid_height, 20, obstacles_polygons)
-
-    route_optimizer = RouteOptimizer(collision_checker, path_adjuster)
+    # Initialize lat/lng-based route optimizer
+    route_optimizer = RouteOptimizer(
+        obstacles=obstacles_latlng
+    )
 
     # Initialize EUM API client
     eum_client = EUMAPIClient()
@@ -188,12 +190,36 @@ def get_existing_ships(db: Session, exclude_ship_id: str = None) -> List[ShipRou
     ships = []
 
     for db_ship in db_ships:
+        # Get path - if it's in pixel format, convert to lat/lng
+        path_data = db_ship.get_path()
+        path_latlng = []
+        for point in path_data:
+            if isinstance(point, (list, tuple)) and len(point) == 2:
+                # Check if it's already lat/lng (values in typical range)
+                if 35 <= point[0] <= 37 and 129 <= point[1] <= 131:
+                    path_latlng.append(point)
+                else:
+                    # Convert from pixel to lat/lng
+                    lat = MAP_ORIGIN['lat'] - (point[1] * 0.00001)
+                    lng = MAP_ORIGIN['lng'] + (point[0] * 0.00001)
+                    path_latlng.append((lat, lng))
+
+        # Get start and goal in lat/lng
+        start_lat = db_ship.start_lat if hasattr(db_ship, 'start_lat') and db_ship.start_lat else \
+                   MAP_ORIGIN['lat'] - (db_ship.start_y * 0.00001)
+        start_lng = db_ship.start_lng if hasattr(db_ship, 'start_lng') and db_ship.start_lng else \
+                   MAP_ORIGIN['lng'] + (db_ship.start_x * 0.00001)
+        goal_lat = db_ship.goal_lat if hasattr(db_ship, 'goal_lat') and db_ship.goal_lat else \
+                  MAP_ORIGIN['lat'] - (db_ship.goal_y * 0.00001)
+        goal_lng = db_ship.goal_lng if hasattr(db_ship, 'goal_lng') and db_ship.goal_lng else \
+                  MAP_ORIGIN['lng'] + (db_ship.goal_x * 0.00001)
+
         ship = ShipRoute(
             name=db_ship.name or db_ship.ship_id,
             ship_id=db_ship.ship_id,
-            start=(db_ship.start_x, db_ship.start_y),
-            goal=(db_ship.goal_x, db_ship.goal_y),
-            path=db_ship.get_path(),
+            start=(start_lat, start_lng),
+            goal=(goal_lat, goal_lng),
+            path=path_latlng,
             departure_time=db_ship.actual_departure,
             speed_knots=db_ship.speed_knots
         )
@@ -204,17 +230,19 @@ def get_existing_ships(db: Session, exclude_ship_id: str = None) -> List[ShipRou
 
 
 def calculate_segments(path: List[tuple], speed_knots: float) -> List[RouteSegment]:
-    """Calculate route segments with speeds"""
+    """Calculate route segments with speeds using lat/lng coordinates"""
+    from core_optimizer_latlng import haversine_distance
+
     segments = []
-    speed_pixels_per_minute = (speed_knots / 60.0) / PIXEL_TO_NM
+    speed_nm_per_minute = speed_knots / 60.0
 
     for i in range(len(path) - 1):
         start = path[i]
         end = path[i + 1]
 
-        distance_pixels = np.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
-        distance_nm = distance_pixels * PIXEL_TO_NM
-        duration_minutes = distance_pixels / speed_pixels_per_minute
+        # Calculate distance using haversine formula
+        distance_nm = haversine_distance(start[0], start[1], end[0], end[1])
+        duration_minutes = distance_nm / speed_nm_per_minute if speed_nm_per_minute > 0 else 0
 
         segment = RouteSegment(
             start_point=start,
@@ -230,62 +258,99 @@ def calculate_segments(path: List[tuple], speed_knots: float) -> List[RouteSegme
 
 @app.post("/api/route/plan", response_model=RouteResponse)
 async def plan_route(request: RouteRequest, db: Session = Depends(get_db)):
-    """Plan optimal route for a ship"""
+    """Plan optimal route for a ship using lat/lng coordinates"""
+
+    # Work directly with lat/lng coordinates
+    start_pos = request.start_position
+    goal_pos = request.goal_position
+
+    print(f"DEBUG: Received start_position: {start_pos}, type: {type(start_pos)}")
+    print(f"DEBUG: Received goal_position: {goal_pos}, type: {type(goal_pos)}")
+
+    # Convert from old pixel format to lat/lng if needed
+    if isinstance(start_pos, (list, tuple)) and len(start_pos) == 2:
+        # Check if it's already lat/lng (typical Pohang area values)
+        if not (35 <= start_pos[0] <= 37 and 129 <= start_pos[1] <= 131):
+            # Convert from pixel to lat/lng
+            start_lat = MAP_ORIGIN['lat'] - (start_pos[1] * 0.00001)
+            start_lng = MAP_ORIGIN['lng'] + (start_pos[0] * 0.00001)
+            start_pos = (start_lat, start_lng)
+            print(f"Converted start from pixels to lat/lng: {start_pos}")
+
+    if isinstance(goal_pos, (list, tuple)) and len(goal_pos) == 2:
+        # Check if it's already lat/lng (typical Pohang area values)
+        if not (35 <= goal_pos[0] <= 37 and 129 <= goal_pos[1] <= 131):
+            # Convert from pixel to lat/lng
+            goal_lat = MAP_ORIGIN['lat'] - (goal_pos[1] * 0.00001)
+            goal_lng = MAP_ORIGIN['lng'] + (goal_pos[0] * 0.00001)
+            goal_pos = (goal_lat, goal_lng)
+            print(f"Converted goal from pixels to lat/lng: {goal_pos}")
 
     # Get existing ships
     existing_ships = get_existing_ships(db, exclude_ship_id=request.ship_id)
 
-    # Find initial path avoiding obstacles
-    initial_path = path_adjuster.find_initial_path(
-        request.start_position,
-        request.goal_position
+    print(f"Processing route from {start_pos} to {goal_pos}")
+
+    # Find optimal path using lat/lng-based A* algorithm
+    optimal_path = route_optimizer.find_path_astar(
+        start_pos[0], start_pos[1],
+        goal_pos[0], goal_pos[1],
+        departure_time=datetime.fromtimestamp(request.departure_time * 60) if request.departure_time else None
     )
 
-    if not initial_path:
+    if not optimal_path:
         raise HTTPException(status_code=400, detail="No valid path found")
 
-    # Create ship route
+    # Create ship route with lat/lng coordinates
     new_ship = ShipRoute(
         name=request.ship_id,
         ship_id=request.ship_id,
-        start=request.start_position,
-        goal=request.goal_position,
-        path=initial_path,
+        start=start_pos,
+        goal=goal_pos,
+        path=optimal_path,
         departure_time=request.departure_time,
         speed_knots=request.speed_knots
     )
-    new_ship.path_length_pixels = route_optimizer.calculate_path_length(initial_path)
     new_ship.calculate_timestamps()
 
-    # Optimize route with flexible time
-    optimal_time, optimal_path = route_optimizer.optimize_flexible_time(
-        new_ship, existing_ships
-    )
+    # Check for time conflicts with existing ships and optimize
+    if existing_ships:
+        # Try to find a better departure time if there are conflicts
+        optimal_time = route_optimizer.optimize_departure_time(
+            new_ship, existing_ships,
+            time_window_minutes=120  # Allow +/- 2 hours flexibility
+        )
+        if optimal_time != request.departure_time:
+            # Recalculate path with new departure time
+            optimal_path = route_optimizer.find_path_astar(
+                start_pos[0], start_pos[1],
+                goal_pos[0], goal_pos[1],
+                departure_time=datetime.fromtimestamp(optimal_time * 60)
+            )
+            new_ship.departure_time = optimal_time
+            new_ship.path = optimal_path
+            new_ship.calculate_timestamps()
+    else:
+        optimal_time = request.departure_time
 
     # Calculate metrics
-    path_length_nm = route_optimizer.calculate_path_length(optimal_path) * PIXEL_TO_NM
     segments = calculate_segments(optimal_path, request.speed_knots)
+    path_length_nm = sum(seg.distance_nm for seg in segments)
     total_duration = sum(seg.duration_minutes for seg in segments)
     arrival_time = optimal_time + total_duration
 
     # Determine optimization type
     time_adjusted = abs(optimal_time - request.departure_time) > 0.1
-    path_changed = optimal_path != initial_path
-
-    optimization_type = "time_adjusted" if time_adjusted else "path_only" if path_changed else "none"
-
-    # Calculate savings
-    time_saved = request.departure_time - optimal_time if optimal_time < request.departure_time else None
-    detour_distance = (path_length_nm - new_ship.path_length_pixels * PIXEL_TO_NM) if path_changed else None
+    optimization_type = "time_adjusted" if time_adjusted else "none"
 
     # Save to database (as pending)
     db_ship = DBShipRoute(
         ship_id=request.ship_id,
         ship_name=request.ship_id,
-        start_x=request.start_position[0],
-        start_y=request.start_position[1],
-        goal_x=request.goal_position[0],
-        goal_y=request.goal_position[1],
+        start_lat=start_pos[0],
+        start_lng=start_pos[1],
+        goal_lat=goal_pos[0],
+        goal_lng=goal_pos[1],
         requested_departure=request.departure_time,
         actual_departure=optimal_time,
         arrival_time=arrival_time,
@@ -297,25 +362,37 @@ async def plan_route(request: RouteRequest, db: Session = Depends(get_db)):
     db_ship.set_path(optimal_path)
     db_ship.set_speeds([request.speed_knots] * len(segments))
 
-    # Check if ship already exists
+    # Check if ship already exists and properly delete it
     existing = db.query(DBShipRoute).filter(DBShipRoute.ship_id == request.ship_id).first()
     if existing:
         db.delete(existing)
+        db.commit()  # Commit the deletion first
 
     db.add(db_ship)
     db.commit()
+
+    # Path is already in lat/lng format
+    path_points_latlng = [[point[0], point[1]] for point in optimal_path]
+
+    # Segments are already in lat/lng format
+    segments_latlng = []
+    for seg in segments:
+        seg_dict = seg.dict()
+        seg_dict['start_point'] = [seg.start_point[0], seg.start_point[1]]
+        seg_dict['end_point'] = [seg.end_point[0], seg.end_point[1]]
+        segments_latlng.append(RouteSegment(**seg_dict))
 
     return RouteResponse(
         ship_id=request.ship_id,
         recommended_departure=optimal_time,
         arrival_time=arrival_time,
-        path_points=optimal_path,
-        segments=segments,
+        path_points=path_points_latlng,  # Return path in lat/lng format
+        segments=segments_latlng,
         total_distance_nm=path_length_nm,
         total_duration_minutes=total_duration,
         optimization_type=optimization_type,
-        time_saved_minutes=time_saved,
-        detour_distance_nm=detour_distance
+        time_saved_minutes=optimal_time - request.departure_time if optimal_time < request.departure_time else None,
+        detour_distance_nm=None  # Not applicable in new system
     )
 
 
@@ -557,70 +634,137 @@ async def update_ship_positions(
 
 @app.get("/api/eum/cctv", response_model=List[CCTVDevice])
 async def get_cctv_devices(db: Session = Depends(get_db)):
-    """Get CCTV devices (fetch from EUM API and cache)"""
-    global eum_client
-
-    # Check if we have cached data
-    devices = db.query(DBCCTVDevice).all()
-
-    if not devices:
-        # Fetch from API and cache
-        api_devices = eum_client.get_cctv_devices()
-        for device_data in api_devices:
-            db_device = DBCCTVDevice(
-                id=device_data['id'],
-                name=device_data['name'],
-                latitude=device_data['latitude'],
-                longitude=device_data['longitude'],
-                address=device_data['address']
-            )
-            db.add(db_device)
-        db.commit()
-        devices = db.query(DBCCTVDevice).all()
+    """Get CCTV devices (hardcoded from actual EUM API data)"""
+    # Hardcoded CCTV data from cctv.md with correct coordinates
+    cctv_data = [
+        {"id": 1, "name": "구룡포 북방파제 AI-01-001", "latitude": "35.985667", "longitude": "129.557917", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam1/index.m3u8", "poleId": 6},
+        {"id": 2, "name": "구룡포 북방파제 ROTT-01-001", "latitude": "35.985667", "longitude": "129.557917", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam2/index.m3u8", "poleId": 6},
+        {"id": 3, "name": "구룡포 북방파제 AI-02-002", "latitude": "35.989056", "longitude": "129.560639", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam3/index.m3u8", "poleId": 9},
+        {"id": 4, "name": "구룡포 북방파제 AI-02-001", "latitude": "35.989056", "longitude": "129.560639", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam4/index.m3u8", "poleId": 9},
+        {"id": 5, "name": "구룡포 북방파제 ROTT-02-001", "latitude": "35.989056", "longitude": "129.560639", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam5/index.m3u8", "poleId": 9},
+        {"id": 6, "name": "구룡포 북방파제 AI-03-001", "latitude": "35.988194", "longitude": "129.559556", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam6/index.m3u8", "poleId": 8},
+        {"id": 7, "name": "구룡포 북방파제 AI-03-002", "latitude": "35.988194", "longitude": "129.559556", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam7/index.m3u8", "poleId": 8},
+        {"id": 8, "name": "구룡포 북방파제 ROTT-03-001", "latitude": "35.988194", "longitude": "129.559556", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam8/index.m3u8", "poleId": 8},
+        {"id": 9, "name": "구룡포 북방파제 AI-04-002", "latitude": "35.987417", "longitude": "129.558556", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam9/index.m3u8", "poleId": 7},
+        {"id": 10, "name": "구룡포 북방파제 AI-04-001", "latitude": "35.987417", "longitude": "129.558556", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam10/index.m3u8", "poleId": 7},
+        {"id": 11, "name": "구룡포 북방파제 ROTT-04-001", "latitude": "35.987417", "longitude": "129.558556", "address": "포항시 남구 구룡포읍 구룡포리 954-3", "url": "https://hls-cctv.pohang-eum.co.kr/cam11/index.m3u8", "poleId": 7},
+        {"id": 12, "name": "구룡포수협맞은편 ROTT-01-001", "latitude": "35.991111", "longitude": "129.557444", "address": "포항시 남구 구룡포읍 구룡포리 954-30", "url": "https://hls-cctv.pohang-eum.co.kr/cam12/index.m3u8", "poleId": 10},
+        {"id": 13, "name": "구룡포항구어시장맞은편 ROTT-01-001", "latitude": "35.990694", "longitude": "129.555917", "address": "포항시 남구 구룡포읍 구룡포리 954-34", "url": "https://hls-cctv.pohang-eum.co.kr/cam13/index.m3u8", "poleId": 11},
+        {"id": 14, "name": "구룡포 공영주차장(신축) ROTT-01-001", "latitude": "35.987417", "longitude": "129.552333", "address": "포항시 남구 구룡포읍 구룡포리 954-11", "url": "https://hls-cctv.pohang-eum.co.kr/cam14/index.m3u8", "poleId": 12},
+        {"id": 15, "name": "구룡포수협냉동공장맞은편 ROTT-01-001", "latitude": "35.985500", "longitude": "129.551833", "address": "포항시 남구 구룡포읍 구룡포리 954-12", "url": "https://hls-cctv.pohang-eum.co.kr/cam15/index.m3u8", "poleId": 13},
+        {"id": 16, "name": "구룡포 남방파제 AI-01-001", "latitude": "35.982750", "longitude": "129.557889", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam16/index.m3u8", "poleId": 14},
+        {"id": 17, "name": "구룡포 남방파제 AI-01-002", "latitude": "35.982750", "longitude": "129.557889", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam17/index.m3u8", "poleId": 14},
+        {"id": 18, "name": "구룡포 남방파제 ROTT-01-001", "latitude": "35.982750", "longitude": "129.557889", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam18/index.m3u8", "poleId": 14},
+        {"id": 19, "name": "구룡포 남방파제 AI-02-001", "latitude": "35.984056", "longitude": "129.558250", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam19/index.m3u8", "poleId": 15},
+        {"id": 20, "name": "구룡포 남방파제 ROTT-02-001", "latitude": "35.984056", "longitude": "129.558250", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam20/index.m3u8", "poleId": 15},
+        {"id": 21, "name": "구룡포 남방파제 AI-03-001", "latitude": "35.984917", "longitude": "129.559167", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam21/index.m3u8", "poleId": 16},
+        {"id": 22, "name": "구룡포 남방파제 AI-04-001", "latitude": "35.985583", "longitude": "129.560139", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam22/index.m3u8", "poleId": 17},
+        {"id": 23, "name": "구룡포 남방파제 ROTT-04-001", "latitude": "35.985583", "longitude": "129.560139", "address": "포항시 남구 구룡포읍 병포리 1-5", "url": "https://hls-cctv.pohang-eum.co.kr/cam23/index.m3u8", "poleId": 17}
+    ]
 
     return [
         CCTVDevice(
-            id=device.id,
-            name=device.name,
-            latitude=device.latitude,
-            longitude=device.longitude,
-            address=device.address
-        ) for device in devices
+            id=device['id'],
+            name=device['name'],
+            latitude=device['latitude'],
+            longitude=device['longitude'],
+            address=device['address'],
+            url=device.get('url'),
+            poleId=device.get('poleId')
+        ) for device in cctv_data
     ]
 
 
 @app.get("/api/eum/lidar", response_model=List[LiDARDevice])
 async def get_lidar_devices(db: Session = Depends(get_db)):
-    """Get LiDAR devices (fetch from EUM API and cache)"""
-    global eum_client
+    """Get LiDAR devices (hardcoded data)"""
 
-    # Check if we have cached data
-    devices = db.query(DBLiDARDevice).all()
-
-    if not devices:
-        # Fetch from API and cache
-        api_devices = eum_client.get_lidar_devices()
-        for device_data in api_devices:
-            db_device = DBLiDARDevice(
-                id=device_data['id'],
-                name=device_data['name'],
-                latitude=device_data['latitude'],
-                longitude=device_data['longitude'],
-                address=device_data['address']
-            )
-            db.add(db_device)
-        db.commit()
-        devices = db.query(DBLiDARDevice).all()
+    # Hardcoded LiDAR data from EUM API
+    lidar_data = [
+        {
+            "id": 1,
+            "name": "구룡포 북방파제",
+            "latitude": "35.985667",
+            "longitude": "129.557917",
+            "address": "포항시 남구 구룡포읍 구룡포리 954-3"
+        },
+        {
+            "id": 2,
+            "name": "구룡포 남방파제",
+            "latitude": "35.984917",
+            "longitude": "129.559167",
+            "address": "포항시 남구 구룡포읍 병포리 1-5"
+        }
+    ]
 
     return [
         LiDARDevice(
-            id=device.id,
-            name=device.name,
-            latitude=device.latitude,
-            longitude=device.longitude,
-            address=device.address
-        ) for device in devices
+            id=device['id'],
+            name=device['name'],
+            latitude=device['latitude'],
+            longitude=device['longitude'],
+            address=device['address']
+        ) for device in lidar_data
     ]
+
+
+@app.get("/api/eum/lidar/statistics")
+async def get_lidar_statistics():
+    """Get real LiDAR entry/exit statistics from EUM API"""
+    import requests
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Fetch real-time statistics from EUM API
+        response = requests.get('https://apis.pohang-eum.co.kr/lidar/realtime/recent/statics', verify=False)
+
+        if response.status_code == 200:
+            api_data = response.json()
+
+            if api_data.get('status') == 'success' and 'data' in api_data:
+                stats_data = api_data['data']
+
+                # Format data for frontend consumption
+                formatted_data = {
+                    "last24h": {
+                        "entry": stats_data['last24hStats']['inCnt'],
+                        "exit": stats_data['last24hStats']['outCnt']
+                    },
+                    "by3hours": []
+                }
+
+                # Add 3-hour interval data
+                for item in stats_data['last24hBy3h']:
+                    formatted_data['by3hours'].append({
+                        "timestamp": item['timeStamp'],
+                        "entry": item['inCnt'],
+                        "exit": item['outCnt']
+                    })
+
+                # Calculate the most recent 3 hour period for "today" stats
+                if stats_data['last24hBy3h']:
+                    recent = stats_data['last24hBy3h'][-1]  # Most recent 3-hour period
+                    formatted_data['recent3h'] = {
+                        "entry": recent['inCnt'],
+                        "exit": recent['outCnt']
+                    }
+
+                return JSONResponse(content=formatted_data)
+            else:
+                logger.error(f"Invalid API response format: {api_data}")
+                return JSONResponse(content={"error": "Invalid API response format"}, status_code=500)
+
+        else:
+            logger.error(f"LiDAR statistics API call failed: {response.status_code}")
+            return JSONResponse(content={"error": f"API call failed with status {response.status_code}"}, status_code=500)
+
+    except requests.RequestException as e:
+        logger.error(f"LiDAR statistics API error: {e}")
+        return JSONResponse(content={"error": f"Failed to fetch LiDAR statistics: {str(e)}"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Unexpected error in LiDAR statistics: {e}")
+        return JSONResponse(content={"error": f"Unexpected error: {str(e)}"}, status_code=500)
 
 
 @app.get("/api/eum/weather")
@@ -671,7 +815,7 @@ async def get_weather(date: Optional[str] = None, db: Session = Depends(get_db))
 
 @app.get("/api/eum/ships/realtime", response_model=List[ShipRealtimeLocation])
 async def get_realtime_locations(db: Session = Depends(get_db)):
-    """Get real-time ship locations from EUM API"""
+    """Get real-time ship locations from database (Demo mode)"""
     global eum_client
 
     # Fetch real-time data from API
@@ -709,6 +853,121 @@ async def get_realtime_locations(db: Session = Depends(get_db)):
         ) for loc in locations
     ]
 
+
+# Live API endpoints - Directly fetch from EUM API without caching
+def convert_eum_ship_to_shipinfo(ship_data: dict, index: int) -> ShipInfo:
+    """Convert EUM ship data to ShipInfo format"""
+    return ShipInfo(
+        id=index,
+        shipId=str(ship_data.get('devId', f'ship_{index}')),
+        type=ship_data.get('type', 'cargo'),
+        name=ship_data.get('name', f'Ship {index}'),
+        polAddr=ship_data.get('polAddr', 'Pohang'),
+        pol=ship_data.get('pol', 'PH'),
+        pod=ship_data.get('pod', 'Unknown'),
+        hm=ship_data.get('hm', ''),
+        pe=ship_data.get('pe', ''),
+        ps=ship_data.get('ps', ''),
+        kw=ship_data.get('kw', 0),
+        engineCnt=ship_data.get('engineCnt', 1),
+        propeller=ship_data.get('propeller', ''),
+        propellerCnt=ship_data.get('propellerCnt', 1),
+        length=float(ship_data.get('length', 100)),
+        breath=float(ship_data.get('breath', 20)),
+        depth=float(ship_data.get('depth', 10)),
+        gt=float(ship_data.get('gt', 5000)),
+        sign=ship_data.get('sign', ''),
+        rgDtm=ship_data.get('rgDtm', ''),
+        dcDate=ship_data.get('dcDate', ''),
+        lat=float(ship_data.get('lat', 36.0)) if ship_data.get('lat') else 36.0,
+        lng=float(ship_data.get('lng', 129.4)) if ship_data.get('lng') else 129.4,
+        status=ship_data.get('status', 'active'),
+        speed_knots=float(ship_data.get('speed', 12.0)),
+        cargo_weight=float(ship_data.get('cargo', 1000.0))
+    )
+
+@app.get("/api/eum/ships/live", response_model=List[ShipInfo])
+async def get_live_ships():
+    """Get ships directly from EUM API (Live mode)"""
+    global eum_client
+
+    # Fetch fresh data from EUM API
+    ships_data = eum_client.get_ship_list()
+
+    # Convert to ShipInfo format
+    return [convert_eum_ship_to_shipinfo(ship, i) for i, ship in enumerate(ships_data)]
+
+@app.get("/api/eum/ships/realtime/live", response_model=List[ShipRealtimeLocation])
+async def get_live_realtime_locations():
+    """Get real-time ship locations directly from EUM API (Live mode)"""
+    global eum_client
+    from datetime import datetime
+
+    # Fetch fresh real-time data from API
+    locations = eum_client.get_ship_realtime_location()
+
+    # Convert to response format
+    result = []
+    for loc in locations:
+        try:
+            result.append(ShipRealtimeLocation(
+                logDateTime=loc.get('logDateTime', datetime.now().isoformat()),
+                devId=int(loc.get('devId', 0)),
+                rcvDateTime=loc.get('rcvDateTime', datetime.now().isoformat()),
+                lati=float(loc.get('lati', 36.0)),
+                longi=float(loc.get('longi', 129.4)),
+                azimuth=float(loc.get('azimuth', 0)),
+                course=float(loc.get('course', 0)),
+                speed=float(loc.get('speed', 0))
+            ))
+        except (ValueError, TypeError) as e:
+            print(f"Error converting location data: {e}")
+            continue
+
+    return result
+
+@app.get("/api/eum/ships/realtime/demo", response_model=List[ShipRealtimeLocation])
+async def get_demo_realtime_locations(db: Session = Depends(get_db)):
+    """Get demo ship locations with simulated movement"""
+    from datetime import datetime
+    import math
+    import time
+
+    # Get ship list from DB
+    ships = db.query(DBShip).limit(20).all()
+
+    # Current time for animation
+    current_time = time.time()
+
+    result = []
+    for i, ship in enumerate(ships):
+        # Create animated positions for demo
+        base_lat = 36.0 + (i * 0.01)
+        base_lng = 129.4 + (i * 0.01)
+
+        # Add circular movement for some ships
+        if i % 3 == 0:
+            angle = (current_time * 0.1 + i) % (2 * math.pi)
+            lat_offset = math.sin(angle) * 0.02
+            lng_offset = math.cos(angle) * 0.02
+        # Linear movement for others
+        else:
+            movement = math.sin(current_time * 0.05 + i) * 0.01
+            lat_offset = movement
+            lng_offset = movement * 0.5
+
+        result.append(ShipRealtimeLocation(
+            logDateTime=datetime.now().isoformat(),
+            devId=ship.id,
+            rcvDateTime=datetime.now().isoformat(),
+            lati=base_lat + lat_offset,
+            longi=base_lng + lng_offset,
+            azimuth=float((current_time * 10 + i * 30) % 360),
+            course=float((current_time * 5 + i * 45) % 360),
+            speed=8.0 + math.sin(current_time * 0.1 + i) * 3.0
+        ))
+
+    return result
 
 @app.get("/api/eum/ships/routes", response_model=List[ShipRouteModel])
 async def get_ship_routes(db: Session = Depends(get_db)):
@@ -949,6 +1208,15 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
     # Process with ChatGPT
     result = chatbot_service.process_text(message)
 
+    # Normalize function keys to match FE modal names
+    legacy_to_fe = {
+        "weather": "show_weather",
+        "sos": "send_sos",
+        "help": "list_features"
+    }
+    if result.get("function") in legacy_to_fe:
+        result["function"] = legacy_to_fe[result["function"]]
+
     # Handle weather request
     if result["function"] == "show_weather":
         # Get weather from OpenWeather API
@@ -956,10 +1224,31 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
         weather_message = weather_service.format_weather_message(weather_data)
 
         return {
-            "function": "weather",
+            "function": "show_weather",
+            "response": weather_message,
             "message": weather_message,
             "weather_data": weather_data,
             "parameters": {}
+        }
+
+    # Handle send message request
+    elif result["function"] == "send_message":
+        params = result.get("parameters", {})
+        content = params.get("message")
+        recipient = params.get("recipient") or "control_center"
+        sender_id = session_data.get("ship_id")
+
+        # Two-step: always let FE modal handle final send; prefill only
+        prefill = {}
+        if isinstance(content, str) and content.strip():
+            prefill["message"] = content.strip()
+        if isinstance(recipient, str) and recipient.strip():
+            prefill["recipient"] = recipient.strip()
+
+        return {
+            "response": "메시지 내용을 확인하고 전송하시겠습니까?",
+            "function": "send_message",
+            "parameters": prefill
         }
 
     # Handle departure/arrival route planning
@@ -1050,7 +1339,7 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
                     """
 
                     return {
-                        "function": "route_suggestion",
+                        "function": "recommend_departure",
                         "message": message,
                         "optimal_route": optimal_route_data,
                         "user_time": user_departure_time,
@@ -1079,7 +1368,7 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
                     """
 
                     return {
-                        "function": "route_confirmed",
+                        "function": "recommend_departure",
                         "message": message,
                         "route_data": optimal_route_data,
                         "needs_confirmation": False,
@@ -1104,7 +1393,7 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
                 db.commit()
 
             result["message"] = "✅ 최적 시간으로 경로가 확정되었습니다.\n🗺️ 지도로 이동하여 경로를 확인하세요."
-            result["function"] = "route_confirmed"
+            result["function"] = "recommend_departure"
             result["route_data"] = route_data
             result["show_map"] = True  # Signal to show map
         else:
@@ -1153,7 +1442,7 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
 
                 🗺️ 지도로 이동하여 경로를 확인하세요.
                 """
-                result["function"] = "route_confirmed"
+                result["function"] = "recommend_departure"
                 result["route_data"] = route_data
                 result["show_map"] = True
             else:
@@ -1178,9 +1467,9 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
         result["parameters"]["active_ships"] = active_routes
 
     return {
-        "response": result["message"],
-        "function": result["function"],
-        "parameters": result["parameters"]
+        "response": result.get("message") or result.get("response") or "",
+        "function": result.get("function", "unknown"),
+        "parameters": result.get("parameters", {})
     }
 
 
@@ -1211,31 +1500,18 @@ async def root():
     }
 
 
-# Coordinate conversion functions (matching frontend MapViewReal.js)
-MAP_BOUNDS = {
-    "topLeft": {"lat": 35.97, "lng": 129.54},  # Top-left corner
-    "bottomRight": {"lat": 35.88, "lng": 129.62}  # Bottom-right corner
+# Coordinate system base point (top-left corner of map)
+MAP_ORIGIN = {
+    "lat": 35.993654,  # Top-left latitude
+    "lng": 129.549146  # Top-left longitude
 }
 
-def lat_lng_to_pixel(lat: float, lng: float) -> tuple:
-    """Convert latitude/longitude to pixel coordinates (0-2000, 0-1400)"""
-    lat_range = MAP_BOUNDS["topLeft"]["lat"] - MAP_BOUNDS["bottomRight"]["lat"]
-    lng_range = MAP_BOUNDS["bottomRight"]["lng"] - MAP_BOUNDS["topLeft"]["lng"]
+# Map range (we use a large area to cover all possible coordinates)
+# Everything is relative to the top-left origin
+# We assume no coordinates will be north or west of the origin
 
-    x = ((lng - MAP_BOUNDS["topLeft"]["lng"]) / lng_range) * 2000
-    y = ((MAP_BOUNDS["topLeft"]["lat"] - lat) / lat_range) * 1400
-
-    return (x, y)
-
-def pixel_to_lat_lng(x: float, y: float) -> dict:
-    """Convert pixel coordinates to latitude/longitude"""
-    lat_range = MAP_BOUNDS["topLeft"]["lat"] - MAP_BOUNDS["bottomRight"]["lat"]
-    lng_range = MAP_BOUNDS["bottomRight"]["lng"] - MAP_BOUNDS["topLeft"]["lng"]
-
-    lat = MAP_BOUNDS["topLeft"]["lat"] - (y / 1400) * lat_range
-    lng = MAP_BOUNDS["topLeft"]["lng"] + (x / 2000) * lng_range
-
-    return {"lat": lat, "lng": lng}
+# Note: We no longer use pixel coordinates - everything is in lat/lng
+# The coordinate conversion functions are removed as we work directly with lat/lng
 
 
 @app.post("/api/route/departure")
@@ -1256,52 +1532,60 @@ async def plan_departure_route(
     if not ship.docking_lat or not ship.fishing_area_lat:
         raise HTTPException(status_code=400, detail="Ship doesn't have docking or fishing area defined")
 
-    # Convert coordinates to pixels
-    start_pixel = lat_lng_to_pixel(ship.docking_lat, ship.docking_lng)
-    goal_pixel = lat_lng_to_pixel(ship.fishing_area_lat, ship.fishing_area_lng)
+    # Use lat/lng coordinates directly
+    start_lat, start_lng = ship.docking_lat, ship.docking_lng
+    goal_lat, goal_lng = ship.fishing_area_lat, ship.fishing_area_lng
 
     # Get existing ships for collision avoidance
     existing_ships = get_existing_ships(db, exclude_ship_id=ship_id)
 
-    # Find initial path avoiding static obstacles
-    initial_path = path_adjuster.find_initial_path(start_pixel, goal_pixel)
+    # Find optimal path using lat/lng A* algorithm
+    optimal_path = route_optimizer.find_path_astar(
+        start_lat, start_lng,
+        goal_lat, goal_lng,
+        departure_time=datetime.fromtimestamp(departure_time * 60) if departure_time else None
+    )
 
-    if not initial_path:
+    if not optimal_path:
         raise HTTPException(status_code=400, detail="No valid path found")
 
-    # Create ship route
+    # Create ship route with lat/lng coordinates
     new_ship = ShipRoute(
         name=f"{ship.name}_departure",
         ship_id=ship_id,
-        start=start_pixel,
-        goal=goal_pixel,
-        path=initial_path,
+        start=(start_lat, start_lng),
+        goal=(goal_lat, goal_lng),
+        path=optimal_path,
         departure_time=departure_time or 0,
         speed_knots=ship.speed if hasattr(ship, 'speed') else 10.0
     )
-    new_ship.path_length_pixels = route_optimizer.calculate_path_length(initial_path)
     new_ship.calculate_timestamps()
 
-    # Optimize with flexible time if allowed
-    if flexible_time:
-        optimized_route = route_optimizer.optimize_route_flexible_time(
+    # Optimize departure time if flexible
+    if flexible_time and existing_ships:
+        optimal_time = route_optimizer.optimize_departure_time(
             new_ship, existing_ships,
-            time_window_start=0,
-            time_window_end=1440  # 24 hours in minutes
+            time_window_minutes=1440  # 24 hours flexibility
         )
+        if optimal_time != departure_time:
+            # Recalculate path with new departure time
+            optimal_path = route_optimizer.find_path_astar(
+                start_lat, start_lng,
+                goal_lat, goal_lng,
+                departure_time=datetime.fromtimestamp(optimal_time * 60)
+            )
+            new_ship.departure_time = optimal_time
+            new_ship.path = optimal_path
+            new_ship.calculate_timestamps()
     else:
-        optimized_route = route_optimizer.optimize_route_fixed_time(
-            new_ship, existing_ships
-        )
+        optimal_time = departure_time or 0
 
-    # Convert path to lat/lng
+    # Path is already in lat/lng format
     path_lat_lng = []
-    for point in optimized_route.path:
-        lat_lng = pixel_to_lat_lng(point[0], point[1])
+    for point in optimal_path:
         path_lat_lng.append({
-            "lat": lat_lng["lat"],
-            "lng": lat_lng["lng"],
-            "pixel": {"x": point[0], "y": point[1]}
+            "lat": point[0],
+            "lng": point[1]
         })
 
     # Save to database if requested

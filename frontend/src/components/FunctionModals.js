@@ -203,7 +203,7 @@ export const ShowRouteModal = ({ isOpen, onClose, parameters }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="🗺️ 내 선박 경로">
+    <Modal isOpen={isOpen} onClose={onClose} title="내 선박 경로">
       {loading ? (
         <div className="loading">경로 정보 불러오는 중...</div>
       ) : (
@@ -211,7 +211,7 @@ export const ShowRouteModal = ({ isOpen, onClose, parameters }) => {
           {/* My Ship's Route - Always Shown First */}
           {myShipRoute && myShipRoute.path_points && myShipRoute.path_points.length > 0 ? (
             <div className="route-item selected" style={{ marginBottom: '20px' }}>
-              <h4>🚢 내 선박: {parameters?.shipId}</h4>
+              <h4>내 선박: {parameters?.shipId}</h4>
               <p>상태: {myShipRoute.status || '대기중'}</p>
               <p>모드: {myShipRoute.optimization_mode || '미설정'}</p>
               <div className="route-details">
@@ -230,10 +230,10 @@ export const ShowRouteModal = ({ isOpen, onClose, parameters }) => {
               borderRadius: '10px',
               textAlign: 'center'
             }}>
-              <h4 style={{ marginBottom: '10px' }}>📍 경로가 없습니다</h4>
+              <h4 style={{ marginBottom: '10px' }}>경로가 없습니다</h4>
               <p>선박 {parameters?.shipId}의 계획된 경로가 없습니다.</p>
               <p style={{ fontSize: '0.9rem', marginTop: '10px' }}>
-                💡 챗봇에서 "출항" 또는 "입항"을 말해보세요
+                챗봇에서 "출항" 또는 "입항"을 말해보세요
               </p>
             </div>
           )}
@@ -314,13 +314,13 @@ export const ShowWeatherModal = ({ isOpen, onClose, parameters }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="🌤️ 날씨 정보">
+    <Modal isOpen={isOpen} onClose={onClose} title="날씨 정보">
       {loading ? (
         <div className="loading">날씨 정보 불러오는 중...</div>
       ) : weather ? (
         <div className="weather-info">
           <div className="weather-item">
-            <span className="weather-icon">🌡️</span>
+            <span className="weather-icon">온도</span>
             <div>
               <h4>기온</h4>
               <p>{weather.temperature}°C</p>
@@ -342,7 +342,7 @@ export const ShowWeatherModal = ({ isOpen, onClose, parameters }) => {
             </div>
           </div>
           <div className="weather-status">
-            <p>✅ 선박 운항에 적합한 날씨입니다</p>
+            <p style={{ color: '#4CAF50' }}>선박 운항에 적합한 날씨입니다</p>
           </div>
         </div>
       ) : (
@@ -363,6 +363,16 @@ export const SendSOSModal = ({ isOpen, onClose, parameters }) => {
   const [shipPosition, setShipPosition] = useState(null);
 
   useEffect(() => {
+    // Prefill from chatbot parameters when modal opens
+    if (isOpen && parameters) {
+      const mappedType = parameters.emergency_type || parameters.type;
+      setEmergency(prev => ({
+        ...prev,
+        type: mappedType && ['collision','fire','engine','medical','other'].includes(mappedType) ? mappedType : prev.type,
+        message: parameters.message ? String(parameters.message) : prev.message
+      }));
+    }
+
     // Fetch ship's current position when modal opens
     const fetchShipPosition = async () => {
       if (!isOpen || !parameters?.shipId) return;
@@ -406,7 +416,7 @@ export const SendSOSModal = ({ isOpen, onClose, parameters }) => {
       });
 
       if (response.data) {
-        alert(`🚨 긴급 신호가 전송되었습니다!\n신호 번호: ${response.data.id}\n관제센터에서 곧 연락드릴 예정입니다.`);
+        alert(`긴급 신호가 전송되었습니다!\n신호 번호: ${response.data.id}\n관제센터에서 곧 연락드릴 예정입니다.`);
         onClose();
       }
     } catch (error) {
@@ -418,7 +428,7 @@ export const SendSOSModal = ({ isOpen, onClose, parameters }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="🆘 긴급 상황">
+    <Modal isOpen={isOpen} onClose={onClose} title="긴급 상황">
       <div className="sos-form">
         <div className="emergency-types">
           <label>
@@ -488,16 +498,41 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
     longitude: 129.57  // 구룡포항 경도
   });
   const [saving, setSaving] = useState(false);
+  const [shipData, setShipData] = useState(null);
+
+  // Fetch ship data to get existing fishing area position
+  useEffect(() => {
+    if (isOpen && parameters?.shipId) {
+      fetch(`${API_BASE}/api/eum/ships/${parameters.shipId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data) {
+            const ship = Array.isArray(data) ? data[0] : data;
+            if (ship.fishingAreaLat && ship.fishingAreaLng) {
+              setSelectedLocation({
+                latitude: parseFloat(ship.fishingAreaLat).toFixed(6),
+                longitude: parseFloat(ship.fishingAreaLng).toFixed(6)
+              });
+            }
+            setShipData(ship);
+          }
+        })
+        .catch(error => console.error('Failed to fetch ship data:', error));
+    }
+  }, [parameters, isOpen]);
 
   useEffect(() => {
     if (!isOpen || map.current) return;
 
-    // Initialize map centered on 구룡포항 with wider view
+    const centerLat = shipData?.fishingAreaLat || 35.99;
+    const centerLng = shipData?.fishingAreaLng || 129.57;
+
+    // Initialize map centered on existing fishing area or 구룡포항
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/satellite-streets-v12',
-      center: [129.57, 35.99],  // [lng, lat] for 구룡포항
-      zoom: 12  // Reduced zoom for wider area view
+      center: [centerLng, centerLat],
+      zoom: 12
     });
 
     // Add navigation controls
@@ -508,7 +543,7 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
       draggable: true,
       color: '#FF6B6B'
     })
-      .setLngLat([129.57, 35.99])
+      .setLngLat([centerLng, centerLat])
       .addTo(map.current)
       .setPopup(
         new mapboxgl.Popup({ offset: 25 })
@@ -540,7 +575,7 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
         map.current = null;
       }
     };
-  }, [isOpen]);
+  }, [isOpen, shipData]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -567,7 +602,7 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="🎣 어장 위치 선택">
+    <Modal isOpen={isOpen} onClose={onClose} title="어장 위치 선택">
       <div className="fishing-area-map">
         <div style={{
           width: '100%',
@@ -625,6 +660,178 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
   );
 };
 
+// Set Docking Position Modal
+export const SetDockingPositionModal = ({ isOpen, onClose, parameters }) => {
+  const mapContainer = useRef(null);
+  const map = useRef(null);
+  const markerRef = useRef(null);
+  const [selectedLocation, setSelectedLocation] = useState({
+    latitude: 35.99,  // 구룡포항 위도
+    longitude: 129.57  // 구룡포항 경도
+  });
+  const [saving, setSaving] = useState(false);
+  const [shipData, setShipData] = useState(null);
+
+  // Fetch ship's existing docking position
+  useEffect(() => {
+    if (isOpen && parameters?.shipId) {
+      fetch(`${API_BASE}/api/eum/ships/${parameters.shipId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data) {
+            const ship = Array.isArray(data) ? data[0] : data;
+            if (ship.dockingLat && ship.dockingLng) {
+              setSelectedLocation({
+                latitude: parseFloat(ship.dockingLat).toFixed(6),
+                longitude: parseFloat(ship.dockingLng).toFixed(6)
+              });
+            }
+            setShipData(ship);
+          }
+        })
+        .catch(error => console.error('Failed to fetch ship data:', error));
+    }
+  }, [parameters, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || map.current) return;
+
+    const centerLat = shipData?.dockingLat || 35.99;
+    const centerLng = shipData?.dockingLng || 129.57;
+
+    // Initialize map centered on existing docking position or 구룡포항
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: 'mapbox://styles/mapbox/satellite-streets-v12',
+      center: [centerLng, centerLat],
+      zoom: 12
+    });
+
+    // Add navigation controls
+    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+    // Add draggable marker for docking position
+    markerRef.current = new mapboxgl.Marker({
+      draggable: true,
+      color: '#4A90E2'
+    })
+      .setLngLat([centerLng, centerLat])
+      .addTo(map.current)
+      .setPopup(
+        new mapboxgl.Popup({ offset: 25 })
+          .setHTML('<p>정박 위치<br/>드래그하여 이동</p>')
+      );
+
+    // Handle marker drag events
+    markerRef.current.on('dragend', () => {
+      const lngLat = markerRef.current.getLngLat();
+      setSelectedLocation({
+        latitude: lngLat.lat.toFixed(6),
+        longitude: lngLat.lng.toFixed(6)
+      });
+    });
+
+    // Add click event to move marker
+    map.current.on('click', (e) => {
+      const { lng, lat } = e.lngLat;
+      markerRef.current.setLngLat([lng, lat]);
+      setSelectedLocation({
+        latitude: lat.toFixed(6),
+        longitude: lng.toFixed(6)
+      });
+    });
+
+    return () => {
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, [isOpen, shipData]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      // Save docking position to backend
+      const response = await axios.put(
+        `${API_BASE}/api/eum/ships/${parameters?.shipId}/positions`,
+        {
+          dockingLat: parseFloat(selectedLocation.latitude),
+          dockingLng: parseFloat(selectedLocation.longitude)
+        }
+      );
+
+      if (response.status === 200) {
+        alert(`정박 위치가 저장되었습니다!\n위도: ${selectedLocation.latitude}\n경도: ${selectedLocation.longitude}`);
+        onClose();
+      }
+    } catch (error) {
+      console.error('Failed to save docking position:', error);
+      alert('정박 위치 저장에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="정박 위치 선택">
+      <div className="docking-area-map">
+        <div style={{
+          width: '100%',
+          height: '300px',
+          borderRadius: '8px',
+          overflow: 'hidden',
+          marginBottom: '15px'
+        }}>
+          <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+        </div>
+
+        <div className="location-info" style={{
+          background: 'rgba(255, 255, 255, 0.1)',
+          padding: '15px',
+          borderRadius: '8px',
+          marginBottom: '15px'
+        }}>
+          <p style={{ margin: '5px 0' }}>
+            <strong>선택된 위치</strong>
+          </p>
+          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
+            위도: {selectedLocation.latitude}°
+          </p>
+          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
+            경도: {selectedLocation.longitude}°
+          </p>
+        </div>
+
+        <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+          <p style={{ fontSize: '0.85rem', color: '#888' }}>
+            지도를 클릭하거나 마커를 드래그하여 정박 위치를 선택하세요
+          </p>
+        </div>
+
+        <button
+          className="submit-btn"
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            width: '100%',
+            padding: '12px',
+            background: saving ? '#666' : '#4A90E2',
+            color: 'white',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '1rem',
+            fontWeight: 'bold',
+            cursor: saving ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {saving ? '저장 중...' : '정박 위치 저장'}
+        </button>
+      </div>
+    </Modal>
+  );
+};
+
 // List Features Modal
 export const ListFeaturesModal = ({ isOpen, onClose, parameters, onFeatureSelect }) => {
   const features = [
@@ -633,6 +840,7 @@ export const ListFeaturesModal = ({ isOpen, onClose, parameters, onFeatureSelect
     { name: '날씨 정보', description: '실시간 날씨 정보를 확인합니다', function: 'show_weather' },
     { name: '긴급 신호', description: '긴급 상황 신호를 전송합니다', function: 'send_sos' },
     { name: '어장 위치 지정', description: '어장 위치를 지도에서 선택합니다', function: 'set_fishing_area' },
+    { name: '정박 위치 지정', description: '정박 위치를 지도에서 선택합니다', function: 'set_docking_position' },
     { name: '수신 메시지', description: '수신된 메시지를 확인합니다', function: 'receive_messages' },
     { name: '메시지 전송', description: '관제센터에 메시지를 전송합니다', function: 'send_message' }
   ];
@@ -709,9 +917,17 @@ export const ReceiveMessagesModal = ({ isOpen, onClose, parameters }) => {
     <Modal isOpen={isOpen} onClose={onClose} title="수신 메시지">
       <div className="messages-container">
         {loading ? (
-          <p>메시지를 불러오는 중...</p>
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <p style={{ color: 'rgba(255, 255, 255, 0.7)' }}>메시지를 불러오는 중...</p>
+          </div>
         ) : messages.length === 0 ? (
-          <p style={{ textAlign: 'center', color: '#666' }}>수신된 메시지가 없습니다.</p>
+          <div style={{
+            textAlign: 'center',
+            padding: '3rem 1rem'
+          }}>
+            <p style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '1rem', marginBottom: '0.5rem' }}>수신된 메시지가 없습니다</p>
+            <p style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '0.9rem' }}>새로운 메시지가 도착하면 여기에 표시됩니다</p>
+          </div>
         ) : (
           <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
             {messages.map(msg => (
@@ -719,21 +935,48 @@ export const ReceiveMessagesModal = ({ isOpen, onClose, parameters }) => {
                 key={msg.id}
                 style={{
                   marginBottom: '1rem',
-                  padding: '0.8rem',
-                  background: msg.sender_id === parameters?.shipId ? '#e3f2fd' : '#f5f5f5',
-                  borderRadius: '6px',
-                  border: '1px solid #e0e0e0'
+                  padding: '1rem',
+                  background: msg.sender_id === parameters?.shipId
+                    ? 'rgba(102, 126, 234, 0.15)'
+                    : 'rgba(255, 255, 255, 0.1)',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  backdropFilter: 'blur(10px)'
                 }}
               >
                 <div style={{
-                  fontSize: '0.9rem',
-                  color: '#666',
-                  marginBottom: '0.5rem'
+                  fontSize: '0.85rem',
+                  color: 'rgba(255, 255, 255, 0.7)',
+                  marginBottom: '0.5rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
                 }}>
-                  <strong>발신:</strong> {msg.sender_name} → <strong>수신:</strong> {msg.recipient_name}
+                  <span>
+                    <strong>{msg.sender_name}</strong> → {msg.recipient_name}
+                  </span>
+                  {!msg.is_read && msg.recipient_id === parameters?.shipId && (
+                    <span style={{
+                      background: 'rgba(102, 126, 234, 0.8)',
+                      color: 'white',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontSize: '0.7rem',
+                      fontWeight: 'bold'
+                    }}>NEW</span>
+                  )}
                 </div>
-                <div style={{ marginBottom: '0.5rem' }}>{msg.message}</div>
-                <div style={{ fontSize: '0.8rem', color: '#999' }}>
+                <div style={{
+                  marginBottom: '0.5rem',
+                  fontSize: '0.95rem',
+                  lineHeight: '1.4',
+                  color: 'rgba(255, 255, 255, 0.9)'
+                }}>{msg.message}</div>
+                <div style={{
+                  fontSize: '0.75rem',
+                  color: 'rgba(255, 255, 255, 0.5)',
+                  textAlign: 'right'
+                }}>
                   {new Date(msg.created_at).toLocaleString('ko-KR')}
                 </div>
               </div>
@@ -744,12 +987,25 @@ export const ReceiveMessagesModal = ({ isOpen, onClose, parameters }) => {
           <button
             onClick={fetchMessages}
             style={{
-              padding: '0.5rem 1rem',
-              background: '#007bff',
+              padding: '14px 24px',
+              background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
               color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
+              border: '1px solid rgba(102, 126, 234, 0.5)',
+              borderRadius: '12px',
+              fontSize: '0.95rem',
+              fontWeight: '500',
+              cursor: 'pointer',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+            }}
+            onMouseOver={(e) => {
+              e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)';
+              e.target.style.transform = 'translateY(-2px)';
+              e.target.style.boxShadow = '0 5px 15px rgba(102, 126, 234, 0.3)';
+            }}
+            onMouseOut={(e) => {
+              e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)';
+              e.target.style.transform = 'translateY(0)';
+              e.target.style.boxShadow = 'none';
             }}
           >
             새로고침
@@ -765,6 +1021,18 @@ export const SendMessageModal = ({ isOpen, onClose, parameters }) => {
   const [recipient, setRecipient] = useState('control_center');
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
+
+  // Prefill from chatbot parameters when modal opens
+  useEffect(() => {
+    if (isOpen && parameters) {
+      if (parameters.recipient && typeof parameters.recipient === 'string') {
+        setRecipient(parameters.recipient);
+      }
+      if (parameters.message && typeof parameters.message === 'string') {
+        setMessage(parameters.message);
+      }
+    }
+  }, [isOpen, parameters]);
 
   const handleSendMessage = async () => {
     if (!message.trim()) {
@@ -798,27 +1066,43 @@ export const SendMessageModal = ({ isOpen, onClose, parameters }) => {
     <Modal isOpen={isOpen} onClose={onClose} title="메시지 전송">
       <div className="message-form">
         <div style={{ marginBottom: '1rem' }}>
-          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-            수신자 선택:
+          <label style={{
+            display: 'block',
+            marginBottom: '0.5rem',
+            fontWeight: 'bold',
+            color: 'rgba(255, 255, 255, 0.9)',
+            fontSize: '0.95rem'
+          }}>
+            수신자 선택
           </label>
           <select
             value={recipient}
             onChange={(e) => setRecipient(e.target.value)}
             style={{
               width: '100%',
-              padding: '0.5rem',
-              borderRadius: '4px',
-              border: '1px solid #ced4da'
+              padding: '0.8rem',
+              borderRadius: '12px',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              background: 'rgba(255, 255, 255, 0.1)',
+              fontSize: '0.95rem',
+              color: 'white',
+              backdropFilter: 'blur(10px)'
             }}
           >
-            <option value="control_center">관제센터</option>
-            <option value="all">전체 선박</option>
+            <option value="control_center" style={{ background: 'rgba(30, 30, 30, 0.9)', color: 'white' }}>관제센터</option>
+            <option value="all" style={{ background: 'rgba(30, 30, 30, 0.9)', color: 'white' }}>전체 선박</option>
           </select>
         </div>
 
         <div style={{ marginBottom: '1rem' }}>
-          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-            메시지:
+          <label style={{
+            display: 'block',
+            marginBottom: '0.5rem',
+            fontWeight: 'bold',
+            color: 'rgba(255, 255, 255, 0.9)',
+            fontSize: '0.95rem'
+          }}>
+            메시지 내용
           </label>
           <textarea
             value={message}
@@ -827,10 +1111,16 @@ export const SendMessageModal = ({ isOpen, onClose, parameters }) => {
             rows={4}
             style={{
               width: '100%',
-              padding: '0.5rem',
-              borderRadius: '4px',
-              border: '1px solid #ced4da',
-              resize: 'vertical'
+              padding: '0.8rem',
+              borderRadius: '12px',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              background: 'rgba(255, 255, 255, 0.1)',
+              fontSize: '0.95rem',
+              color: 'white',
+              resize: 'vertical',
+              fontFamily: 'inherit',
+              lineHeight: '1.5',
+              backdropFilter: 'blur(10px)'
             }}
           />
         </div>
@@ -840,15 +1130,26 @@ export const SendMessageModal = ({ isOpen, onClose, parameters }) => {
           disabled={sending}
           style={{
             width: '100%',
-            padding: '0.75rem',
-            background: sending ? '#666' : '#007bff',
+            padding: '14px',
+            background: sending ? 'rgba(100, 100, 100, 0.3)' : 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
             color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '1rem',
-            fontWeight: 'bold',
-            cursor: sending ? 'not-allowed' : 'pointer'
+            border: sending ? '1px solid rgba(100, 100, 100, 0.3)' : '1px solid rgba(102, 126, 234, 0.5)',
+            borderRadius: '12px',
+            fontSize: '0.95rem',
+            fontWeight: '500',
+            cursor: sending ? 'not-allowed' : 'pointer',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
           }}
+          onMouseOver={(e) => !sending && (
+            e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+            e.target.style.transform = 'translateY(-2px)',
+            e.target.style.boxShadow = '0 5px 15px rgba(102, 126, 234, 0.3)'
+          )}
+          onMouseOut={(e) => !sending && (
+            e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
+            e.target.style.transform = 'translateY(0)',
+            e.target.style.boxShadow = 'none'
+          )}
         >
           {sending ? '전송 중...' : '메시지 전송'}
         </button>

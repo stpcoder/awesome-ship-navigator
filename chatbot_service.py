@@ -19,7 +19,7 @@ class ChatbotService:
             print("Please set OPENAI_API_KEY in .env file")
         self.client = OpenAI(api_key=self.api_key) if self.api_key else None
 
-        # Define system prompt
+        # Define system prompt (aligned to FE function keys)
         self.system_prompt = """
         당신은 선박 항로 관제 시스템의 AI 어시스턴트입니다.
         사용자의 요청을 분석하여 적절한 기능을 JSON 형식으로 반환하세요.
@@ -37,36 +37,48 @@ class ChatbotService:
            - "1시간 후" → "1h"
            - "2시간 30분 후" → "2h30m"
 
-        응답 형식:
+        반드시 유효한 JSON 형식으로만 응답하세요. 다음 키를 포함해야 합니다:
+        - function: 아래 기능 목록 중 하나
+        - message: 사용자에게 보여줄 간단한 안내 메시지
+        - parameters: 기능 실행에 필요한 매개변수 객체
+
+        기능 목록 (FE와 일치하는 9개):
+        1. "recommend_departure" - 출항/입항 경로 계획
+        2. "show_weather" - 날씨 정보 확인
+        3. "send_sos" - 긴급 상황 신고
+        4. "set_fishing_area" - 어장 위치 설정
+        5. "set_docking_position" - 정박 위치 설정
+        6. "receive_messages" - 수신 메시지 확인
+        7. "send_message" - 메시지 전송
+        8. "list_features" - 사용 안내(기능 목록)
+        9. "unknown" - 이해하지 못한 요청
+
+        SOS 요청 인식 지침:
+        - "도와줘", "큰일났어", "긴급", "위험", "구조", "살려줘", "전복", "침몰", "넘어질 것 같아", "capsize" 등은 SOS로 인식
+        - parameters 요구사항:
+          - emergency_type: collision | fire | engine | medical | other
+          - message: 사용자의 원문을 요약한 1문장
+          - priority: high (기본값)
+        - 예시: {"function": "send_sos", "message": "긴급 신호를 전송하겠습니다.", "parameters": {"emergency_type": "engine", "message": "엔진 이상이 의심됩니다.", "priority": "high"}}
+
+        출항/입항 응답 형식 예시:
         {
-            "function": "기능명",
-            "message": "사용자에게 보여줄 안내 메시지",
+            "function": "recommend_departure",
+            "message": "30분 후 출항 경로를 계획하겠습니다.",
             "parameters": {
-                "type": "departure|arrival",  // 출항/입항 구분
-                "preferred_time": "시간 정보",  // 예: "now", "30m", "1h", "2h30m"
-                "need_clarification": false  // 시간이 명시되면 항상 false
+                "type": "departure|arrival",
+                "preferred_time": "now|30m|1h|2h30m",
+                "need_clarification": false
             }
         }
 
         예시:
         - "30분 후에 출항하려고 해" → {"function": "recommend_departure", "message": "30분 후 출항 경로를 계획하겠습니다.", "parameters": {"type": "departure", "preferred_time": "30m", "need_clarification": false}}
         - "지금 입항할래" → {"function": "recommend_departure", "message": "지금 바로 입항 경로를 계획하겠습니다.", "parameters": {"type": "arrival", "preferred_time": "now", "need_clarification": false}}
-        - "1시간 후에 입항 예정" → {"function": "recommend_departure", "message": "1시간 후 입항 경로를 계획하겠습니다.", "parameters": {"type": "arrival", "preferred_time": "1h", "need_clarification": false}}
-
-        기능 목록 (8개):
-        1. "recommend_departure" - 출항/입항 경로 계획
-        2. "weather" - 날씨 정보 확인
-        3. "sos" - 긴급 상황 신고
-        4. "set_fishing_area" - 어장 위치 설정
-        5. "receive_messages" - 수신 메시지 확인
-        6. "send_message" - 메시지 전송
-        7. "help" - 사용 안내
-        8. "unknown" - 이해하지 못한 요청
-
-        중요:
-        - 출항/입항 요청시 시간이 명시되면 바로 처리
-        - 계획 전송, 경로 표시는 자동으로 처리되므로 별도 기능 없음
-        - 반드시 유효한 JSON 형식으로만 응답하세요.
+        - "날씨 어때?" → {"function": "show_weather", "message": "현재 날씨 정보를 확인하겠습니다.", "parameters": {}}
+        - "도와줘! 선박이 넘어질 것 같아" → {"function": "send_sos", "message": "긴급 신호를 전송하겠습니다.", "parameters": {"priority": "high"}}
+        - "메시지 전송해줘 '지금 입항합니다'" → {"function": "send_message", "message": "메시지를 전송합니다.", "parameters": {"recipient": "control_center", "message": "지금 입항합니다"}}
+        - "기능 보여줘" → {"function": "list_features", "message": "사용 가능한 기능 목록입니다.", "parameters": {}}
         """
 
     def process_text(self, message: str) -> Dict[str, Any]:
@@ -157,7 +169,7 @@ class ChatbotService:
             }
         elif any(word in message_lower for word in ["날씨", "기상", "바람", "파도", "비"]):
             return {
-                "function": "weather",
+                "function": "show_weather",
                 "message": "현재 날씨 정보를 확인하겠습니다.",
                 "parameters": {}
             }
@@ -167,11 +179,29 @@ class ChatbotService:
                 "message": "어장 위치를 지도에서 선택해주세요.",
                 "parameters": {}
             }
-        elif any(word in message_lower for word in ["sos", "긴급", "위험", "도움", "구조"]):
+        elif any(word in message_lower for word in [
+            "sos", "긴급", "위급", "위험", "도움", "도와줘", "살려줘",
+            "구조", "큰일", "전복", "침몰", "넘어지", "capsize", "capsizing"
+        ]):
+            # Infer emergency type and a concise message
+            emergency_type = "other"
+            if any(k in message_lower for k in ["엔진", "engine"]):
+                emergency_type = "engine"
+            elif any(k in message_lower for k in ["화재", "불", "fire"]):
+                emergency_type = "fire"
+            elif any(k in message_lower for k in ["충돌", "collis"]):
+                emergency_type = "collision"
+            elif any(k in message_lower for k in ["의료", "다친", "응급", "medical"]):
+                emergency_type = "medical"
+
+            concise = message.strip()
+            if len(concise) > 80:
+                concise = concise[:77] + "..."
+
             return {
-                "function": "sos",
+                "function": "send_sos",
                 "message": "긴급 신호를 전송합니다! 관제센터에 연결하겠습니다.",
-                "parameters": {"priority": "high"}
+                "parameters": {"priority": "high", "emergency_type": emergency_type, "message": concise}
             }
         elif any(word in message_lower for word in ["수신 메시지", "받은 메시지", "메시지 확인", "메시지 읽기"]):
             return {
@@ -179,7 +209,7 @@ class ChatbotService:
                 "message": "수신된 메시지를 확인합니다.",
                 "parameters": {}
             }
-        elif any(word in message_lower for word in ["메시지 전송", "메시지 보내", "관제센터에 전달", "관제센터한테"]):
+        elif any(word in message_lower for word in ["메시지 전송", "메시지 보내", "관제센터에 전달", "관제센터한테", "메세지 전송", "메세지 보내"]):
             # Extract message if provided inline
             import re
             match = re.search(r'["\'"](.+)["\'"]', message)
@@ -188,11 +218,11 @@ class ChatbotService:
             return {
                 "function": "send_message",
                 "message": "메시지를 전송합니다.",
-                "parameters": {"message": msg_content} if msg_content else {}
+                "parameters": {"recipient": "control_center", "message": msg_content} if msg_content else {"recipient": "control_center"}
             }
-        elif any(word in message_lower for word in ["기능", "도움", "help", "명령", "사용법"]):
+        elif any(word in message_lower for word in ["기능", "도움", "help", "명령", "사용법", "목록"]):
             return {
-                "function": "help",
+                "function": "list_features",
                 "message": self._get_features_list(),
                 "parameters": {}
             }
@@ -207,12 +237,12 @@ class ChatbotService:
         """Get default message for function"""
         messages = {
             "recommend_departure": "입출항 경로를 계획하겠습니다.",
-            "weather": "날씨 정보를 확인하겠습니다.",
-            "sos": "긴급 신호를 전송합니다!",
+            "show_weather": "날씨 정보를 확인하겠습니다.",
+            "send_sos": "긴급 신호를 전송합니다!",
             "set_fishing_area": "어장 위치를 지도에서 선택해주세요.",
             "receive_messages": "수신된 메시지를 확인합니다.",
             "send_message": "메시지를 전송합니다.",
-            "help": self._get_features_list(),
+            "list_features": self._get_features_list(),
             "unknown": "죄송합니다. 다시 말씀해 주시겠어요?"
         }
         return messages.get(function, "처리하겠습니다.")
@@ -235,11 +265,15 @@ class ChatbotService:
 
         🆘 긴급 상황
            - "SOS"
-           - "도움이 필요해"
+           - "도와줘", "큰일났어"
 
         💬 메시지
            - "수신 메시지 확인해줘"
            - "관제센터에 메시지 보내줘"
+
+        📍 위치 설정
+           - "어장 위치 지정"
+           - "정박 위치 지정"
 
         💬 사용법 예시:
         1. 출항 시간을 말씀하시면 최적 경로를 계획합니다

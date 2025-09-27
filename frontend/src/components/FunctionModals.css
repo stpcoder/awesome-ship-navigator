@@ -96,6 +96,16 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Textarea and Select placeholder styling for dark theme */
+.modal-body textarea::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.modal-body select option {
+  background: rgba(30, 30, 30, 0.95);
+  color: white;
+}
+
 /* Modal Body */
 .modal-body {
   padding: 20px;

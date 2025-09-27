@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import CCTVMarkerManager from './CCTVMarkerManager';
+import LiDARMarkerManager from './LiDARMarkerManager';
 
 // Use the Mapbox access token from environment variable
 mapboxgl.accessToken = process.env.REACT_APP_MAPBOX_TOKEN || 'pk.eyJ1IjoidGFlaG9qZSIsImEiOiJjbWZtYnZlbWowMDhlMnBvZXltZXdmbnJhIn0.qZ5M8WwEMUfIA9G42G3ztA';
@@ -15,31 +17,42 @@ const MapViewReal = ({
   routePoints,
   plannedRoute,
   onMapClick,
-  sosAlerts = []  // Accept SOS alerts
+  sosAlerts = [],  // Accept SOS alerts
+  selectedCCTVMarker = null,  // Selected CCTV to show marker
+  selectedCCTV = null,  // Currently selected CCTV for filtering
+  onCCTVSelect,  // Handle CCTV selection
+  cctvData = [],  // CCTV data to display
+  showCCTVMarkers = false,  // Toggle CCTV markers visibility
+  lidarData = [],  // LiDAR data to display
+  showLiDARMarkers = false,  // Toggle LiDAR markers visibility
+  onLiDARSelect  // Handle LiDAR selection
 }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const markersRef = useRef({});
+  const cctvMarkersRef = useRef({});  // Store CCTV markers
   const [mapLoaded, setMapLoaded] = useState(false);
   const clickHandlerRef = useRef(null);
   const tempMarkerRef = useRef(null);
 
-  // Map bounds based on your specifications
-  // Top-left: 35.993884, 129.546805
-  // Bottom-right: 35.981355, 129.568345
+  // Pohang area bounds for proper map centering
   const MAP_BOUNDS = {
-    topLeft: { lat: 35.993884, lng: 129.546805 },
-    bottomRight: { lat: 35.981355, lng: 129.568345 }
+    topLeft: { lat: 36.10, lng: 129.30 },
+    bottomRight: { lat: 35.90, lng: 129.50 }
   };
+
+  // Pixel dimensions for the coordinate system (matching backend)
+  const PIXEL_WIDTH = 500;
+  const PIXEL_HEIGHT = 350;
 
   // Convert pixel coordinates to lat/lng (still needed for route points)
   const pixelToLatLng = useCallback((x, y) => {
     const latRange = MAP_BOUNDS.topLeft.lat - MAP_BOUNDS.bottomRight.lat;
     const lngRange = MAP_BOUNDS.bottomRight.lng - MAP_BOUNDS.topLeft.lng;
 
-    // For route planning, use 2000x1400 canvas dimensions
-    const lat = MAP_BOUNDS.topLeft.lat - (y / 1400) * latRange;
-    const lng = MAP_BOUNDS.topLeft.lng + (x / 2000) * lngRange;
+    // For route planning, use 500x350 canvas dimensions
+    const lat = MAP_BOUNDS.topLeft.lat - (y / PIXEL_HEIGHT) * latRange;
+    const lng = MAP_BOUNDS.topLeft.lng + (x / PIXEL_WIDTH) * lngRange;
 
     return { lat, lng };
   }, []);
@@ -50,12 +63,14 @@ const MapViewReal = ({
     const latRange = MAP_BOUNDS.topLeft.lat - MAP_BOUNDS.bottomRight.lat;
     const lngRange = MAP_BOUNDS.bottomRight.lng - MAP_BOUNDS.topLeft.lng;
 
-    // Convert lat/lng back to pixel coordinates (0-2000, 0-1400)
-    const x = ((lng - MAP_BOUNDS.topLeft.lng) / lngRange) * 2000;
-    const y = ((MAP_BOUNDS.topLeft.lat - lat) / latRange) * 1400;
+    // Convert lat/lng back to pixel coordinates (0-500, 0-350)
+    const x = ((lng - MAP_BOUNDS.topLeft.lng) / lngRange) * PIXEL_WIDTH;
+    const y = ((MAP_BOUNDS.topLeft.lat - lat) / latRange) * PIXEL_HEIGHT;
 
     return { x, y };
   }, []);
+
+
 
   // Initialize map
   useEffect(() => {
@@ -64,29 +79,17 @@ const MapViewReal = ({
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/satellite-streets-v12', // satellite view with streets
-      center: [
-        (MAP_BOUNDS.topLeft.lng + MAP_BOUNDS.bottomRight.lng) / 2,
-        (MAP_BOUNDS.topLeft.lat + MAP_BOUNDS.bottomRight.lat) / 2
-      ],
-      zoom: 16, // Initial zoom level
-      minZoom: 3, // Allow zooming out to see whole world
-      maxZoom: 22 // Allow maximum zoom in
+      center: [129.55, 35.985], // Pohang Guryongpo port center
+      zoom: 14, // Good zoom level for port area
+      minZoom: 10, // Don't zoom out too much
+      maxZoom: 18 // Allow good detail zoom
     });
 
     map.current.on('load', () => {
       setMapLoaded(true);
 
-      // Fit the map to the exact bounds with no padding to ensure corners match
-      map.current.fitBounds([
-        [MAP_BOUNDS.topLeft.lng, MAP_BOUNDS.topLeft.lat],  // Northwest corner
-        [MAP_BOUNDS.bottomRight.lng, MAP_BOUNDS.bottomRight.lat]  // Southeast corner
-      ], {
-        padding: 0,  // No padding to ensure exact fit
-        animate: false,
-        linear: true
-      });
-
-      // Add navigation controls
+      // Don't auto-fit bounds - let user navigate freely
+      // Just add navigation controls
       map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
       // Corner markers removed for cleaner interface
@@ -266,36 +269,49 @@ const MapViewReal = ({
 
     // Add ship markers
     ships.forEach(ship => {
-      if (ship.latitude && ship.longitude) {
+      // Handle both formats: {latitude, longitude} and {lati, longi}
+      const lat = ship.latitude || ship.lati;
+      const lng = ship.longitude || ship.longi;
+
+      if (lat && lng) {
         // Create custom marker element
         const el = document.createElement('div');
         el.className = 'ship-marker';
-        el.style.width = '20px';
-        el.style.height = '20px';
+
+        // Handle different ID fields - convert to string for comparison
+        const shipId = String(ship.shipId || ship.devId || ship.id);
+        const selectedId = String(selectedShip?.shipId || selectedShip?.devId || selectedShip?.id || '');
+        const isSelected = shipId && selectedId && shipId === selectedId;
+
+        // Make selected ship marker larger and more visible
+        el.style.width = isSelected ? '30px' : '20px';
+        el.style.height = isSelected ? '30px' : '20px';
         el.style.borderRadius = '50%';
-        el.style.backgroundColor = ship.shipId === selectedShip?.shipId ? '#ff0000' : '#00ff00';
-        el.style.border = '2px solid white';
+        el.style.backgroundColor = isSelected ? '#ff0000' : '#00ff00';
+        el.style.boxShadow = isSelected ? '0 0 20px #ff0000' : '0 0 5px rgba(0,255,0,0.5)';
+        el.style.border = isSelected ? '3px solid white' : '2px solid white';
         el.style.cursor = 'pointer';
+        el.style.zIndex = isSelected ? '1000' : '100';
 
         // Add popup
         const popup = new mapboxgl.Popup({ offset: 25 })
           .setHTML(`
             <div style="padding: 5px;">
-              <strong>${ship.name || ship.shipId}</strong><br/>
+              <strong>${ship.name || `선박 ${shipId}`}</strong><br/>
               속도: ${ship.speed || 0} knots<br/>
               방향: ${ship.course || 0}°
             </div>
           `);
 
         const marker = new mapboxgl.Marker(el)
-          .setLngLat([ship.longitude, ship.latitude])
+          .setLngLat([lng, lat])
           .setPopup(popup)
           .addTo(map.current);
 
-        markersRef.current[ship.shipId] = marker;
+        markersRef.current[shipId] = marker;
       }
     });
-  }, [ships, selectedShip?.shipId, mapLoaded]);
+  }, [ships, selectedShip, mapLoaded]);
 
   // Display SOS alerts on the map
   useEffect(() => {
@@ -374,6 +390,194 @@ const MapViewReal = ({
     });
   }, [sosAlerts, mapLoaded]);
 
+  // Helper function to create sensor marker element
+  const createSensorMarkerElement = (type, sensor) => {
+    const el = document.createElement('div');
+    el.className = type === 'cctv' ? 'cctv-marker' : 'lidar-marker';
+    el.style.width = '30px';
+    el.style.height = '30px';
+    el.style.borderRadius = '50%'; // 원형으로 변경
+    el.style.backgroundColor = type === 'cctv' ? '#4169E1' : '#9b59b6';  // Blue for CCTV, Purple for LiDAR
+    el.style.border = '2px solid white';
+    el.style.boxShadow = type === 'cctv'
+      ? '0 0 10px rgba(65, 105, 225, 0.5)'
+      : '0 0 10px rgba(155, 89, 182, 0.5)';
+    el.style.display = 'flex';
+    el.style.alignItems = 'center';
+    el.style.justifyContent = 'center';
+    el.style.cursor = 'pointer';
+    el.style.fontSize = '16px';
+    el.style.position = 'relative';
+    el.style.transition = 'all 0.2s ease';
+    el.innerHTML = type === 'cctv' ? '📹' : '📡';
+
+    // Add hover effect without transform
+    el.onmouseenter = () => {
+      el.style.width = '33px';
+      el.style.height = '33px';
+      el.style.fontSize = '18px';
+      el.style.boxShadow = type === 'cctv'
+        ? '0 0 15px rgba(65, 105, 225, 0.8)'
+        : '0 0 15px rgba(155, 89, 182, 0.8)';
+      el.style.borderWidth = '3px';
+    };
+    el.onmouseleave = () => {
+      el.style.width = '30px';
+      el.style.height = '30px';
+      el.style.fontSize = '16px';
+      el.style.boxShadow = type === 'cctv'
+        ? '0 0 10px rgba(65, 105, 225, 0.5)'
+        : '0 0 10px rgba(155, 89, 182, 0.5)';
+      el.style.borderWidth = '2px';
+    };
+
+    // Handle click for CCTV video
+    if (type === 'cctv') {
+      el.onclick = () => {
+        if (onCCTVSelect) {
+          onCCTVSelect(sensor);
+        }
+      };
+    }
+
+    return el;
+  };
+
+  // Helper function to create sensor popup
+  const createSensorPopup = (type, sensor) => {
+    const color = type === 'cctv' ? '#4169E1' : '#9b59b6';
+    const icon = type === 'cctv' ? '📹' : '📡';
+    const typeName = type === 'cctv' ? 'CCTV' : 'LiDAR';
+
+    return new mapboxgl.Popup({ offset: 25 })
+      .setHTML(`
+        <div style="padding: 10px; min-width: 200px;">
+          <h3 style="margin: 0 0 10px; color: ${color};">${icon} ${typeName}</h3>
+          <p style="margin: 5px 0;"><strong>이름:</strong> ${sensor.name}</p>
+          <p style="margin: 5px 0;"><strong>주소:</strong> ${sensor.address || '정보 없음'}</p>
+          <p style="margin: 5px 0;"><strong>상태:</strong> <span style="color: #00ff00;">● 작동중</span></p>
+          ${type === 'cctv' ? '<p style="margin: 10px 0 0; color: #666; font-size: 12px;">클릭하여 실시간 영상 보기</p>' : ''}
+        </div>
+      `);
+  };
+
+  // Update CCTV and LiDAR markers
+  useEffect(() => {
+    if (!mapLoaded || !map.current) return;
+
+    // Remove old CCTV and LiDAR markers
+    Object.entries(cctvMarkersRef.current).forEach(([key, marker]) => {
+      marker.remove();
+      delete cctvMarkersRef.current[key];
+    });
+
+    // Handle sensor markers based on type
+    if (selectedCCTVMarker) {
+      if (selectedCCTVMarker.type === 'cctv-all') {
+        // Show all CCTV markers
+        console.log('Adding all CCTV markers:', selectedCCTVMarker.markers?.length);
+        selectedCCTVMarker.markers?.forEach(cctv => {
+          const el = createSensorMarkerElement('cctv', cctv);
+
+          const lng = parseFloat(cctv.lng || cctv.longitude);
+          const lat = parseFloat(cctv.lat || cctv.latitude);
+
+          const marker = new mapboxgl.Marker(el)
+            .setLngLat([lng, lat])
+            .setPopup(createSensorPopup('cctv', cctv))
+            .addTo(map.current);
+
+          cctvMarkersRef.current[`cctv-${cctv.id}`] = marker;
+        });
+
+        // Fit map to show all markers
+        if (selectedCCTVMarker.markers?.length > 0) {
+          const bounds = new mapboxgl.LngLatBounds();
+          selectedCCTVMarker.markers.forEach(cctv => {
+            const lng = parseFloat(cctv.lng || cctv.longitude);
+            const lat = parseFloat(cctv.lat || cctv.latitude);
+            bounds.extend([lng, lat]);
+          });
+          map.current.fitBounds(bounds, { padding: 50, duration: 1500 });
+        }
+      } else if (selectedCCTVMarker.type === 'cctv-single') {
+        // Show single CCTV marker
+        console.log('Adding single CCTV marker:', selectedCCTVMarker.marker);
+        const cctv = selectedCCTVMarker.marker;
+        const el = createSensorMarkerElement('cctv', cctv);
+
+        const lng = parseFloat(cctv.lng || cctv.longitude);
+        const lat = parseFloat(cctv.lat || cctv.latitude);
+
+        const marker = new mapboxgl.Marker(el)
+          .setLngLat([lng, lat])
+          .setPopup(createSensorPopup('cctv', cctv))
+          .addTo(map.current);
+
+        cctvMarkersRef.current[`cctv-${cctv.id}`] = marker;
+
+        // Zoom to single marker
+        map.current.flyTo({
+          center: [lng, lat],
+          zoom: 15,
+          duration: 1500
+        });
+      } else if (selectedCCTVMarker.type === 'lidar-all') {
+        // Show all LiDAR markers
+        console.log('Adding all LiDAR markers:', selectedCCTVMarker.markers?.length);
+        selectedCCTVMarker.markers?.forEach(lidar => {
+          const el = createSensorMarkerElement('lidar', lidar);
+
+          const lng = parseFloat(lidar.lng || lidar.longitude);
+          const lat = parseFloat(lidar.lat || lidar.latitude);
+
+          const marker = new mapboxgl.Marker(el)
+            .setLngLat([lng, lat])
+            .setPopup(createSensorPopup('lidar', lidar))
+            .addTo(map.current);
+
+          cctvMarkersRef.current[`lidar-${lidar.id}`] = marker;
+        });
+
+        // Fit map to show all markers
+        if (selectedCCTVMarker.markers?.length > 0) {
+          const bounds = new mapboxgl.LngLatBounds();
+          selectedCCTVMarker.markers.forEach(lidar => {
+            const lng = parseFloat(lidar.lng || lidar.longitude);
+            const lat = parseFloat(lidar.lat || lidar.latitude);
+            bounds.extend([lng, lat]);
+          });
+          map.current.fitBounds(bounds, { padding: 50, duration: 1500 });
+        }
+      } else if (selectedCCTVMarker.type === 'lidar-single') {
+        // Show single LiDAR marker
+        console.log('Adding single LiDAR marker:', selectedCCTVMarker.marker);
+        const lidar = selectedCCTVMarker.marker;
+        const el = createSensorMarkerElement('lidar', lidar);
+
+        const lng = parseFloat(lidar.lng || lidar.longitude);
+        const lat = parseFloat(lidar.lat || lidar.latitude);
+
+        const marker = new mapboxgl.Marker(el)
+          .setLngLat([lng, lat])
+          .setPopup(createSensorPopup('lidar', lidar))
+          .addTo(map.current);
+
+        cctvMarkersRef.current[`lidar-${lidar.id}`] = marker;
+
+        // Zoom to single marker
+        map.current.flyTo({
+          center: [lng, lat],
+          zoom: 15,
+          duration: 1500
+        });
+      } else if (selectedCCTVMarker.type === 'clear') {
+        // Clear all markers - already removed above
+        console.log('Cleared all sensor markers');
+      }
+    }
+  }, [selectedCCTVMarker, mapLoaded, onCCTVSelect]);
+
   // Update fishing area and docking position markers for selected ship
   useEffect(() => {
     if (!mapLoaded || !map.current) {
@@ -442,7 +646,7 @@ const MapViewReal = ({
         dockingEl.className = 'docking-position-marker';
         dockingEl.style.width = '40px';
         dockingEl.style.height = '40px';
-        dockingEl.style.borderRadius = '8px';
+        dockingEl.style.borderRadius = '50%';
         dockingEl.style.backgroundColor = '#2ecc71';
         dockingEl.style.border = '4px solid white';
         dockingEl.style.boxShadow = '0 0 10px rgba(46, 204, 113, 0.8)';
@@ -512,11 +716,11 @@ const MapViewReal = ({
       map.current.removeSource('planned-route');
     }
 
-    if (plannedRoute && plannedRoute.path && plannedRoute.path.length > 0) {
-      // Convert pixel coordinates to lat/lng
-      const coordinates = plannedRoute.path.map(point => {
-        const latLng = pixelToLatLng(point[0], point[1]);
-        return [latLng.lng, latLng.lat];
+    if (plannedRoute && plannedRoute.path_points && plannedRoute.path_points.length > 0) {
+      // path_points are already in lat/lng format from backend
+      const coordinates = plannedRoute.path_points.map(point => {
+        // Backend sends [lat, lng], Mapbox expects [lng, lat]
+        return [point[1], point[0]];
       });
 
       // Add route source and layer
@@ -548,6 +752,7 @@ const MapViewReal = ({
       });
     }
   }, [plannedRoute, mapLoaded, pixelToLatLng]);
+
 
   // Draw start and goal points
   useEffect(() => {
@@ -682,6 +887,25 @@ const MapViewReal = ({
       overflow: 'hidden'
     }}>
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+
+      {/* CCTV Markers */}
+      {mapLoaded && showCCTVMarkers && (
+        <CCTVMarkerManager
+          map={map.current}
+          cctvData={cctvData}
+          onCCTVSelect={onCCTVSelect}
+          selectedCCTV={selectedCCTV}
+        />
+      )}
+
+      {/* LiDAR Markers */}
+      {mapLoaded && showLiDARMarkers && (
+        <LiDARMarkerManager
+          map={map.current}
+          lidarData={lidarData}
+          onLiDARSelect={onLiDARSelect}
+        />
+      )}
 
       {/* Legend */}
       <div style={{

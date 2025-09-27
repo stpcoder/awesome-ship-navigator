@@ -92,7 +92,7 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
       <h3 style={{ marginBottom: '0.5rem' }}>선박 정보</h3>
 
       {/* Ship Dropdown Selector */}
-      <div style={{ marginBottom: '1rem' }}>
+      <div style={{ marginBottom: '0.5rem' }}>
         <select
           value={shipDropdownValue}
           onChange={handleShipSelect}
@@ -121,10 +121,13 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
 
       {selectedShip && (
         <div style={{
-          marginTop: '1rem',
+          marginTop: '0.5rem',
           padding: '1rem',
-          background: 'var(--panel-bg)',
-          borderRadius: '4px',
+          background: 'rgba(255, 255, 255, 0.05)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          borderRadius: '10px',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
           maxHeight: editMode ? 'calc(100vh - 400px)' : 'auto',
           overflowY: editMode ? 'auto' : 'visible',
           color: 'var(--text-primary)'
@@ -149,13 +152,15 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
 
           {!editMode && (
             <div style={{ fontSize: '0.9rem' }}>
-              <p style={{ margin: '0.5rem 0' }}>
-                {selectedShip.name} ({selectedShip.shipId}) {selectedShip.type}
-                {selectedShip.length && selectedShip.breath && selectedShip.depth && selectedShip.gt && (
-                  <> (길이: {selectedShip.length?.toFixed(2) || selectedShip.length}m 폭: {selectedShip.breath?.toFixed(2) || selectedShip.breath}m 깊이: {selectedShip.depth?.toFixed(2) || selectedShip.depth}m 톤수: {selectedShip.gt?.toFixed(2) || selectedShip.gt}톤)</>
-                )}
+              <p style={{ margin: '0.3rem 0', fontWeight: '600', color: '#5dade2' }}>
+                {selectedShip.name} ({selectedShip.shipId})
               </p>
-              {selectedShip.pol && <p style={{ margin: '0.5rem 0' }}><strong>모항:</strong> {selectedShip.pol}</p>}
+              {(selectedShip.length || selectedShip.breath || selectedShip.depth || selectedShip.gt) && (
+                <p style={{ margin: '0.3rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  ({selectedShip.length?.toFixed(1) || selectedShip.length || '0'} x {selectedShip.breath?.toFixed(1) || selectedShip.breath || '0'} x {selectedShip.depth?.toFixed(1) || selectedShip.depth || '0'}, {selectedShip.gt?.toFixed(0) || selectedShip.gt || '0'} t)
+                </p>
+              )}
+              {selectedShip.pol && <p style={{ margin: '0.3rem 0' }}><strong>모항:</strong> {selectedShip.pol}</p>}
             </div>
           )}
 
@@ -169,10 +174,10 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
 
           <div style={{ fontSize: '0.9rem' }}>
             {selectedShip.type === '어선' && (
-              <div style={{ marginBottom: '0.8rem' }}>
-                <h5 style={{ margin: '0 0 0.3rem 0', fontSize: '0.95rem' }}>어장 위치</h5>
+              <div style={{ marginBottom: '0.3rem' }}>
                 {editMode ? (
                   <div>
+                    <h5 style={{ margin: '0 0 0.3rem 0', fontSize: '0.95rem' }}>어장 위치</h5>
                     <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
                       <input
                         type="number"
@@ -208,19 +213,19 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
                     </button>
                   </div>
                 ) : (
-                  <p style={{ margin: '0', color: positions.fishingAreaLat ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                    {positions.fishingAreaLat && positions.fishingAreaLng
-                      ? `${parseFloat(positions.fishingAreaLat).toFixed(4)}, ${parseFloat(positions.fishingAreaLng).toFixed(4)}`
+                  <p style={{ margin: '0.3rem 0' }}>
+                    <strong>어장 위치:</strong> {positions.fishingAreaLat && positions.fishingAreaLng
+                      ? `(${parseFloat(positions.fishingAreaLat).toFixed(1)}, ${parseFloat(positions.fishingAreaLng).toFixed(1)})`
                       : '미설정'}
                   </p>
                 )}
               </div>
             )}
 
-            <div style={{ marginBottom: '0.8rem' }}>
-              <h5 style={{ margin: '0 0 0.3rem 0', fontSize: '0.95rem' }}>정박 위치</h5>
+            <div style={{ marginBottom: '0.3rem' }}>
               {editMode ? (
                 <div>
+                  <h5 style={{ margin: '0 0 0.3rem 0', fontSize: '0.95rem' }}>정박 위치</h5>
                   <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
                     <input
                       type="number"
@@ -256,9 +261,9 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
                   </button>
                 </div>
               ) : (
-                <p style={{ margin: '0', color: positions.dockingLat ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                  {positions.dockingLat && positions.dockingLng
-                    ? `${parseFloat(positions.dockingLat).toFixed(4)}, ${parseFloat(positions.dockingLng).toFixed(4)}`
+                <p style={{ margin: '0.3rem 0' }}>
+                  <strong>정박 위치:</strong> {positions.dockingLat && positions.dockingLng
+                    ? `(${parseFloat(positions.dockingLat).toFixed(1)}, ${parseFloat(positions.dockingLng).toFixed(1)})`
                     : '미설정'}
                 </p>
               )}

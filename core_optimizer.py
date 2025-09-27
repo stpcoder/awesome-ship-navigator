@@ -170,6 +170,22 @@ class PathAdjuster:
         start_grid = (int(start[0] / self.grid_size), int(start[1] / self.grid_size))
         goal_grid = (int(goal[0] / self.grid_size), int(goal[1] / self.grid_size))
 
+        # Check if start or goal is outside grid bounds
+        start_out_of_bounds = (start_grid[0] < 0 or start_grid[0] >= self.grid_width or
+                               start_grid[1] < 0 or start_grid[1] >= self.grid_height)
+        goal_out_of_bounds = (goal_grid[0] < 0 or goal_grid[0] >= self.grid_width or
+                              goal_grid[1] < 0 or goal_grid[1] >= self.grid_height)
+
+        # If both points are out of bounds, return direct path
+        if start_out_of_bounds and goal_out_of_bounds:
+            return [start, goal]
+
+        # If only one point is out of bounds, we still need to handle it
+        if start_out_of_bounds or goal_out_of_bounds:
+            # For now, return a direct path if any point is outside
+            # In the future, could find entry/exit points to the grid
+            return [start, goal]
+
         if self.grid[start_grid[1], start_grid[0]] == 1:
             return None
         if self.grid[goal_grid[1], goal_grid[0]] == 1:

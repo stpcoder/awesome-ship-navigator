@@ -7,6 +7,10 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 from urllib.parse import quote, unquote
+import urllib3
+
+# SSL 경고 비활성화 (EUM API 서버 인증서 문제로 인한 경고)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,7 +37,8 @@ class EUMAPIClient:
 
         try:
             logger.info(f"Making request to: {url}")
-            response = requests.get(url, params=params, headers=self.headers)
+            # SSL 검증 비활성화 (EUM API 서버 인증서 문제 우회)
+            response = requests.get(url, params=params, headers=self.headers, verify=False)
             response.raise_for_status()
 
             data = response.json()
@@ -71,6 +76,19 @@ class EUMAPIClient:
         except Exception as e:
             logger.error(f"Failed to get CCTV devices: {e}")
             return []
+
+    def get_cctv_stream_url(self, cctv_id: str) -> str:
+        """
+        Get CCTV stream URL for specific camera
+
+        Args:
+            cctv_id: CCTV device ID
+
+        Returns:
+            Stream URL for the CCTV
+        """
+        # Construct the stream URL - this might need adjustment based on actual API
+        return f"{self.base_url}/cctv/stream/{cctv_id}?serviceKey={self.api_key}"
 
     def get_lidar_devices(self) -> List[Dict[str, Any]]:
         """

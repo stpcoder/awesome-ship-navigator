@@ -13,9 +13,9 @@
   --text-light: #666;
 
   --border-color: rgba(255, 255, 255, 0.3);
-  --shadow-sm: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
-  --shadow-md: 0 8px 32px 0 rgba(31, 38, 135, 0.25);
-  --shadow-lg: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+  --shadow-sm: 0 4px 15px 0 rgba(31, 38, 135, 0.08);
+  --shadow-md: 0 6px 20px 0 rgba(31, 38, 135, 0.12);
+  --shadow-lg: 0 8px 25px 0 rgba(31, 38, 135, 0.15);
 
   --glass-blur: 20px;
   --glass-border: 1px solid rgba(255, 255, 255, 0.18);
@@ -46,6 +46,75 @@
 /* Base styles */
 * {
   transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Chatbot Navigation Button */
+.chatbot-nav-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 25px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.chatbot-nav-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+
+.chatbot-nav-button svg {
+  margin-right: 8px;
+}
+
+/* VTS Navigation Button (for ChatBot component) */
+.vts-nav-button {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  padding: 8px 20px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #667eea;
+  border-radius: 25px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  z-index: 1000;
+}
+
+.vts-nav-button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+  background: white;
+}
+
+.vts-nav-button svg {
+  margin-right: 8px;
+}
+
+/* Pulse animation for Live indicator */
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 body {
@@ -175,13 +244,13 @@ body {
 
 /* Glassmorphism Panel Components */
 .panel {
-  background: var(--bg-panel);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-radius: 20px;
   padding: 1.25rem;
-  border: var(--glass-border);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
   position: relative;
   overflow: hidden;
 }

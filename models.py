@@ -112,6 +112,8 @@ class CCTVDevice(BaseModel):
     latitude: str
     longitude: str
     address: str
+    url: Optional[str] = None
+    poleId: Optional[int] = None
 
 
 class LiDARDevice(BaseModel):
