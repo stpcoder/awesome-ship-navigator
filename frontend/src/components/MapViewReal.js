@@ -25,7 +25,8 @@ const MapViewReal = ({
   showCCTVMarkers = false,  // Toggle CCTV markers visibility
   lidarData = [],  // LiDAR data to display
   showLiDARMarkers = false,  // Toggle LiDAR markers visibility
-  onLiDARSelect  // Handle LiDAR selection
+  onLiDARSelect,  // Handle LiDAR selection
+  onShipSelect    // Handle ship selection from marker click (optional)
 }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -316,6 +317,10 @@ const MapViewReal = ({
             // Trigger a custom event on window with marker ship identity
             const event = new CustomEvent('map-ship-marker-click', { detail: { shipId: ship.shipId, devId: ship.devId, id: ship.id } });
             window.dispatchEvent(event);
+            // Also call provided handler directly if available
+            if (typeof onShipSelect === 'function') {
+              onShipSelect({ shipId: ship.shipId, devId: ship.devId, id: ship.id });
+            }
           } catch (e) {
             console.warn('Failed to dispatch marker click event:', e);
           }

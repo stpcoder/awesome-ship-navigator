@@ -467,6 +467,11 @@ function MainDashboard() {
             lidarData={sensorData.lidar}  // Pass LiDAR data
             showLiDARMarkers={showLiDARMarkers}  // Control LiDAR marker visibility
             onLiDARSelect={handleLiDARSelect}  // Handle LiDAR selection
+            onShipSelect={(ids) => {
+              // Directly select ship to force re-render/highlight immediately
+              const match = ships.find(s => s.id === ids.id) || ships.find(s => String(s.shipId) === String(ids.shipId));
+              if (match) setSelectedShip(match);
+            }}
           />
 
           <TimeController
