@@ -7,6 +7,7 @@ import ShipInfo from './components/ShipInfo';
 import SensorInfo from './components/SensorInfo';
 import RoutePlanner from './components/RoutePlanner';
 import TimeController from './components/TimeController';
+import SimulationControl from './components/SimulationControl';
 import ChatBot from './components/ChatBot';
 import CCTVVideo from './components/CCTVVideo';
 import LiDARStats from './components/LiDARStats';
@@ -45,6 +46,10 @@ function MainDashboard() {
   const [showCCTVMarkers, setShowCCTVMarkers] = useState(false); // Show CCTV markers on map
   const [showLiDARMarkers, setShowLiDARMarkers] = useState(false); // Show LiDAR markers on map
   const [showEntryExitStats, setShowEntryExitStats] = useState(false); // Show entry/exit statistics window
+  const [isSimulationRunning, setIsSimulationRunning] = useState(false); // Simulation running state
+  const [simulationTime, setSimulationTime] = useState(null); // Current simulation time
+  const [selectedShipRoute, setSelectedShipRoute] = useState(null); // Selected ship's route from simulation
+  const [expandedPanel, setExpandedPanel] = useState(null); // Track which accordion panel is expanded
 
   // Always show realtime ships regardless of mode
   useEffect(() => {
@@ -66,9 +71,12 @@ function MainDashboard() {
   // Always fetch realtime data
   useEffect(() => {
     fetchRealtimeData(); // Fetch immediately
-    const interval = setInterval(fetchRealtimeData, 5000); // Update every 5 seconds
+    const interval = setInterval(fetchRealtimeData, isSimulationRunning ? 1000 : 5000); // Faster updates during simulation
     return () => clearInterval(interval);
-  }, [isLiveMode]);  // Re-run when Live mode changes
+  }, [isLiveMode, isSimulationRunning]);  // Re-run when mode or simulation changes
+
+  // Fetch simulation routes when needed
+  // Removed fetch simulation routes effect - not needed
 
   // Listen for map marker click events to sync selection
   useEffect(() => {
@@ -79,6 +87,7 @@ function MainDashboard() {
         const match = ships.find(s => s.id === id);
         if (match) {
           setSelectedShip(match);
+          fetchShipRoute(match.shipId || match.ship_id || match.id);
           return;
         }
       }
@@ -86,6 +95,7 @@ function MainDashboard() {
         const match = ships.find(s => s.id === devId);
         if (match) {
           setSelectedShip(match);
+          fetchShipRoute(match.shipId || match.ship_id || match.id);
           return;
         }
       }
@@ -93,12 +103,15 @@ function MainDashboard() {
         const match = ships.find(s => String(s.shipId) === String(shipId));
         if (match) {
           setSelectedShip(match);
+          fetchShipRoute(match.shipId || match.ship_id || match.id);
         }
       }
     };
     window.addEventListener('map-ship-marker-click', handler);
     return () => window.removeEventListener('map-ship-marker-click', handler);
   }, [ships]);
+
+  // Removed fetch route effect - not needed for simulation
 
   // Fetch SOS alerts periodically
   useEffect(() => {
@@ -157,6 +170,15 @@ function MainDashboard() {
 
   const fetchRealtimeData = async () => {
     try {
+      // If simulation is running, fetch from simulation endpoint
+      if (isSimulationRunning) {
+        const response = await axios.get(`${API_BASE}/api/simulation/ship-positions`);
+        console.log('Fetched simulation data:', response.data.length, 'ships');
+        setRealtimeData(response.data);
+        return;
+      }
+
+      // Otherwise use normal endpoints
       const endpoint = isLiveMode
         ? `${API_BASE}/api/eum/ships/realtime/live`  // Live API endpoint
         : `${API_BASE}/api/eum/ships/realtime/demo`; // Demo endpoint aligned with DB ship IDs
@@ -182,6 +204,30 @@ function MainDashboard() {
     const byShipId = ships.find(s => String(s.shipId) === markerIdStr);
     if (byShipId) {
       setSelectedShip(byShipId);
+    }
+  };
+
+  // Removed fetchSimulationRoutes function - not needed
+
+  const handleSimulationStatusChange = (status) => {
+    setIsSimulationRunning(status.is_running);
+    setSimulationTime(status.simulation_time);
+  };
+
+  // Fetch selected ship's route from simulation
+  const fetchShipRoute = async (shipId) => {
+    try {
+      // Try to get route from simulation database
+      const response = await axios.get(`${API_BASE}/api/simulation/ship-route/${shipId}`);
+      if (response.data && response.data.path) {
+        console.log('Fetched ship route:', response.data);
+        setSelectedShipRoute(response.data);
+      } else {
+        setSelectedShipRoute(null);
+      }
+    } catch (error) {
+      console.error('Failed to fetch ship route:', error);
+      setSelectedShipRoute(null);
     }
   };
 
@@ -357,100 +403,191 @@ function MainDashboard() {
 
   return (
     <div className="App">
-      <header className="App-header">
-        <h1>소규모 항구 통합 관제 시스템</h1>
-        <div style={{
-          position: 'absolute',
-          right: '20px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '15px'
-        }}>
-          {/* Live/Demo Toggle */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            background: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '30px',
-            padding: '4px',
-            border: '1px solid rgba(255, 255, 255, 0.2)'
-          }}>
-            <button
-              onClick={() => setIsLiveMode(false)}
-              style={{
-                padding: '6px 14px',
-                background: !isLiveMode ? 'white' : 'transparent',
-                color: !isLiveMode ? '#667eea' : 'white',
-                border: 'none',
-                borderRadius: '20px',
-                fontSize: '13px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease'
-              }}
-            >
-              Demo
-            </button>
-            <button
-              onClick={() => setIsLiveMode(true)}
-              style={{
-                padding: '6px 14px',
-                background: isLiveMode ? 'white' : 'transparent',
-                color: isLiveMode ? '#667eea' : 'white',
-                border: 'none',
-                borderRadius: '20px',
-                fontSize: '13px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease'
-              }}
-            >
-              Live
-              {isLiveMode && (
-                <span style={{
-                  display: 'inline-block',
-                  width: '6px',
-                  height: '6px',
-                  background: '#4ade80',
-                  borderRadius: '50%',
-                  marginLeft: '6px',
-                  animation: 'pulse 2s infinite'
-                }} />
-              )}
-            </button>
-          </div>
+      {/* Floating Header */}
+      <div className="floating-header">
+        <div className="floating-header-title">소규모 항구 통합 관제 시스템</div>
 
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            className="floating-header-button"
+            onClick={() => setIsLiveMode(!isLiveMode)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <span style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: isLiveMode ? '#4CAF50' : '#999',
+              display: 'inline-block',
+              animation: isLiveMode ? 'pulse 2s infinite' : 'none'
+            }}></span>
+            {isLiveMode ? 'Live' : 'Demo'}
+          </button>
 
-          {/* AI Chatbot Button */}
-          <Link to="/chatbot" className="chatbot-nav-button">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+          <Link to="/chatbot" className="floating-header-button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
             </svg>
             AI 챗봇
           </Link>
         </div>
-      </header>
+      </div>
 
       <div className="main-container">
-        <div className="left-panel">
-          <ShipInfo
-            ships={ships}
-            selectedShip={selectedShip}
-            onSelectShip={setSelectedShip}
-            onUpdatePositions={handleUpdatePositions}
-            onMapClick={handleShipMapClickMode}
-          />
+        <div className="accordion-panel">
+          {/* Accordion Panel 1: Ship Info */}
+          <div className="accordion-item">
+            <div
+              className={`accordion-header ${expandedPanel === 'shipInfo' ? 'active' : ''}`}
+              onClick={() => setExpandedPanel(expandedPanel === 'shipInfo' ? null : 'shipInfo')}
+            >
+              <span className="accordion-title">선박 정보</span>
+              <span className="accordion-arrow">{expandedPanel === 'shipInfo' ? '▼' : '▶'}</span>
+            </div>
+            {expandedPanel === 'shipInfo' && (
+              <div className="accordion-content">
+                <ShipInfo
+                  ships={ships}
+                  selectedShip={selectedShip}
+                  onSelectShip={(ship) => {
+                    setSelectedShip(ship);
+                    if (ship) {
+                      fetchShipRoute(ship.shipId || ship.ship_id || ship.id);
+                    } else {
+                      setSelectedShipRoute(null);
+                    }
+                  }}
+                  onUpdatePositions={handleUpdatePositions}
+                  onMapClick={handleShipMapClickMode}
+                />
+              </div>
+            )}
+          </div>
 
-          <SensorInfo
-            sensorData={sensorData}
-            onSensorSelect={handleSensorSelect}
-          />
+          {/* Accordion Panel 2: Sensor Info */}
+          <div className="accordion-item">
+            <div
+              className={`accordion-header ${expandedPanel === 'sensorInfo' ? 'active' : ''}`}
+              onClick={() => setExpandedPanel(expandedPanel === 'sensorInfo' ? null : 'sensorInfo')}
+            >
+              <span className="accordion-title">센서 정보</span>
+              <span className="accordion-arrow">{expandedPanel === 'sensorInfo' ? '▼' : '▶'}</span>
+            </div>
+            {expandedPanel === 'sensorInfo' && (
+              <div className="accordion-content">
+                <SensorInfo
+                  sensorData={sensorData}
+                  onSensorSelect={handleSensorSelect}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Accordion Panel 3: Route Planner */}
+          <div className="accordion-item">
+            <div
+              className={`accordion-header ${expandedPanel === 'routePlanner' ? 'active' : ''}`}
+              onClick={() => setExpandedPanel(expandedPanel === 'routePlanner' ? null : 'routePlanner')}
+            >
+              <span className="accordion-title">출항 스케줄</span>
+              <span className="accordion-arrow">{expandedPanel === 'routePlanner' ? '▼' : '▶'}</span>
+            </div>
+            {expandedPanel === 'routePlanner' && (
+              <div className="accordion-content">
+                <RoutePlanner
+                  ships={ships}
+                  selectedShip={selectedShip}
+                  onSelectShip={(ship) => {
+                    setSelectedShip(ship);
+                    if (ship) {
+                      fetchShipRoute(ship.shipId || ship.ship_id || ship.id);
+                    } else {
+                      setSelectedShipRoute(null);
+                    }
+                  }}
+                  onShipRouteClick={(shipId) => {
+                    fetchShipRoute(shipId);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Accordion Panel 4: Simulation Control */}
+          <div className="accordion-item">
+            <div
+              className={`accordion-header ${expandedPanel === 'simulation' ? 'active' : ''}`}
+              onClick={() => setExpandedPanel(expandedPanel === 'simulation' ? null : 'simulation')}
+            >
+              <span className="accordion-title">시뮬레이션 제어</span>
+              <span className="accordion-arrow">{expandedPanel === 'simulation' ? '▼' : '▶'}</span>
+            </div>
+            {expandedPanel === 'simulation' && (
+              <div className="accordion-content">
+                <SimulationControl
+                  onSimulationStatusChange={handleSimulationStatusChange}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Accordion Panel 5: Emergency */}
+          <div className="accordion-item">
+            <div
+              className={`accordion-header ${expandedPanel === 'emergency' ? 'active' : ''}`}
+              onClick={() => setExpandedPanel(expandedPanel === 'emergency' ? null : 'emergency')}
+            >
+              <span className="accordion-title">긴급 상황</span>
+              <span className="accordion-arrow">{expandedPanel === 'emergency' ? '▼' : '▶'}</span>
+            </div>
+            {expandedPanel === 'emergency' && (
+              <div className="accordion-content">
+                <Emergency
+                  sosAlerts={sosAlerts}
+                  onSOSUpdate={handleSOSUpdate}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Accordion Panel 6: Messages */}
+          <div className="accordion-item">
+            <div
+              className={`accordion-header ${expandedPanel === 'messages' ? 'active' : ''}`}
+              onClick={() => setExpandedPanel(expandedPanel === 'messages' ? null : 'messages')}
+            >
+              <span className="accordion-title">메시지</span>
+              {unreadCount > 0 && (
+                <span className="unread-badge">{unreadCount}</span>
+              )}
+              <span className="accordion-arrow">{expandedPanel === 'messages' ? '▼' : '▶'}</span>
+            </div>
+            {expandedPanel === 'messages' && (
+              <div className="accordion-content">
+                <Messages
+                  messages={messages}
+                  unreadCount={unreadCount}
+                  selectedChatShip={selectedChatShip}
+                  setSelectedChatShip={setSelectedChatShip}
+                  messageInput={messageInput}
+                  setMessageInput={setMessageInput}
+                  sendMessage={sendMessage}
+                  markMessagesAsRead={markMessagesAsRead}
+                  ships={ships}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="center-panel">
+        <div className="map-container">
           <MapViewReal
             ships={realtimeData}  // Always show realtime data
-            routes={selectedShip && !isLiveMode ? routes.filter(r => r.ship_id === selectedShip.ship_id) : []}  // Show routes only for selected ship in Demo mode
+            routes={selectedShipRoute ? [selectedShipRoute] : []}  // Show route for selected ship if available
             selectedShip={selectedShip}
             obstacles={obstaclesData} // Pass obstacle data
             onSetStart={() => setMapClickMode('start')}
@@ -472,13 +609,7 @@ function MainDashboard() {
               const match = ships.find(s => s.id === ids.id) || ships.find(s => String(s.shipId) === String(ids.shipId));
               if (match) setSelectedShip(match);
             }}
-          />
-
-          <TimeController
-            currentTime={currentTime}
-            onTimeChange={setCurrentTime}
-            isPlaying={isPlaying}
-            onPlayPause={() => setIsPlaying(!isPlaying)}
+            isSimulationRunning={isSimulationRunning}
           />
 
           {/* CCTV Video Display */}
@@ -503,32 +634,6 @@ function MainDashboard() {
               }}
             />
           )}
-        </div>
-
-        <div className="right-panel">
-          <RoutePlanner
-            ships={ships}
-            selectedShip={selectedShip}
-            onPlanRoute={handlePlanRoute}
-          />
-
-
-          <Emergency
-            sosAlerts={sosAlerts}
-            onSOSUpdate={handleSOSUpdate}
-          />
-
-          <Messages
-            messages={messages}
-            unreadCount={unreadCount}
-            selectedChatShip={selectedChatShip}
-            setSelectedChatShip={setSelectedChatShip}
-            messageInput={messageInput}
-            setMessageInput={setMessageInput}
-            sendMessage={sendMessage}
-            markMessagesAsRead={markMessagesAsRead}
-            ships={ships}
-          />
         </div>
       </div>
     </div>

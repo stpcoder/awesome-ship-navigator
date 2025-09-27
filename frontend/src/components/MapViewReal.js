@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import CCTVMarkerManager from './CCTVMarkerManager';
@@ -26,7 +26,10 @@ const MapViewReal = ({
   lidarData = [],  // LiDAR data to display
   showLiDARMarkers = false,  // Toggle LiDAR markers visibility
   onLiDARSelect,  // Handle LiDAR selection
-  onShipSelect    // Handle ship selection from marker click (optional)
+  onShipSelect,    // Handle ship selection from marker click (optional)
+  isSimulationRunning = false,  // Whether simulation is active
+  simulationRoutes = [],  // Routes for simulation display
+  selectedShipRoute = null  // Selected ship's route to display
 }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -288,9 +291,9 @@ const MapViewReal = ({
         el.style.width = isSelected ? '30px' : '20px';
         el.style.height = isSelected ? '30px' : '20px';
         el.style.borderRadius = '50%';
-        el.style.backgroundColor = isSelected ? '#ff0000' : '#00ff00';
-        el.style.boxShadow = isSelected ? '0 0 20px #ff0000' : '0 0 5px rgba(0,255,0,0.5)';
-        el.style.border = isSelected ? '3px solid white' : '2px solid white';
+        el.style.backgroundColor = isSelected ? '#667eea' : '#7B68EE';
+        el.style.boxShadow = isSelected ? '0 0 20px rgba(102, 126, 234, 0.8)' : '0 0 8px rgba(123, 104, 238, 0.4)';
+        el.style.border = isSelected ? '3px solid white' : '2px solid rgba(255, 255, 255, 0.8)';
         el.style.cursor = 'pointer';
         el.style.zIndex = isSelected ? '1000' : '100';
 
@@ -350,9 +353,9 @@ const MapViewReal = ({
         el.style.width = '40px';
         el.style.height = '40px';
         el.style.borderRadius = '50%';
-        el.style.backgroundColor = '#ff0000';
+        el.style.backgroundColor = '#FF6B6B';
         el.style.border = '4px solid white';
-        el.style.boxShadow = '0 0 20px rgba(255, 0, 0, 0.8)';
+        el.style.boxShadow = '0 0 20px rgba(255, 107, 107, 0.8)';
         el.style.display = 'flex';
         el.style.alignItems = 'center';
         el.style.justifyContent = 'center';
@@ -471,7 +474,7 @@ const MapViewReal = ({
           <h3 style="margin: 0 0 10px; color: ${color};">${icon} ${typeName}</h3>
           <p style="margin: 5px 0;"><strong>이름:</strong> ${sensor.name}</p>
           <p style="margin: 5px 0;"><strong>주소:</strong> ${sensor.address || '정보 없음'}</p>
-          <p style="margin: 5px 0;"><strong>상태:</strong> <span style="color: #00ff00;">● 작동중</span></p>
+          <p style="margin: 5px 0;"><strong>상태:</strong> <span style="color: #4CAF50;">● 작동중</span></p>
           ${type === 'cctv' ? '<p style="margin: 10px 0 0; color: #666; font-size: 12px;">클릭하여 실시간 영상 보기</p>' : ''}
         </div>
       `);
@@ -628,16 +631,21 @@ const MapViewReal = ({
         fishingEl.style.width = '40px';
         fishingEl.style.height = '40px';
         fishingEl.style.borderRadius = '50%';
-        fishingEl.style.backgroundColor = '#3498db';
-        fishingEl.style.border = '4px solid white';
-        fishingEl.style.boxShadow = '0 0 10px rgba(52, 152, 219, 0.8)';
+        fishingEl.style.backgroundColor = '#87CEEB';
+        fishingEl.style.border = '3px solid white';
+        fishingEl.style.boxShadow = '0 0 15px rgba(135, 206, 235, 0.6)';
         fishingEl.style.display = 'flex';
         fishingEl.style.alignItems = 'center';
         fishingEl.style.justifyContent = 'center';
         fishingEl.style.position = 'absolute';
         fishingEl.style.zIndex = '1000';
         fishingEl.style.cursor = 'pointer';
-        fishingEl.innerHTML = '<span style="color: white; font-size: 20px; font-weight: bold;">⚓</span>';
+        fishingEl.innerHTML = `
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2Z" fill="white"/>
+            <path d="M12 7L8 11H11V22H13V11H16L12 7Z" fill="white"/>
+            <circle cx="12" cy="4" r="1.5" stroke="white" stroke-width="0.5" fill="rgba(255,255,255,0.3)"/>
+          </svg>`;
 
         // Create marker with custom options
         const fishingMarker = new mapboxgl.Marker({
@@ -663,16 +671,21 @@ const MapViewReal = ({
         dockingEl.style.width = '40px';
         dockingEl.style.height = '40px';
         dockingEl.style.borderRadius = '50%';
-        dockingEl.style.backgroundColor = '#2ecc71';
-        dockingEl.style.border = '4px solid white';
-        dockingEl.style.boxShadow = '0 0 10px rgba(46, 204, 113, 0.8)';
+        dockingEl.style.backgroundColor = '#4CAF50';
+        dockingEl.style.border = '3px solid white';
+        dockingEl.style.boxShadow = '0 0 15px rgba(76, 175, 80, 0.6)';
         dockingEl.style.display = 'flex';
         dockingEl.style.alignItems = 'center';
         dockingEl.style.justifyContent = 'center';
         dockingEl.style.position = 'absolute';
         dockingEl.style.zIndex = '1000';
         dockingEl.style.cursor = 'pointer';
-        dockingEl.innerHTML = '<span style="color: white; font-size: 20px; font-weight: bold;">🚢</span>';
+        dockingEl.innerHTML = `
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M5 17H7V11H5V17ZM17 17H19V11H17V17ZM9 17H11V11H9V17ZM13 17H15V11H13V17Z" fill="white"/>
+            <path d="M3 9L12 3L21 9V11H3V9Z" fill="white"/>
+            <rect x="3" y="17" width="18" height="2" fill="white"/>
+          </svg>`;
 
         // Create marker with custom options
         const dockingMarker = new mapboxgl.Marker({
@@ -721,6 +734,74 @@ const MapViewReal = ({
       console.log('❌ No selected ship for position markers');
     }
   }, [selectedShip, mapLoaded]);
+
+  // Memoize route coordinates to prevent unnecessary re-renders
+  const routeCoordinates = useMemo(() => {
+    if (routes && routes.length > 0 && routes[0].path) {
+      return routes[0].path.map(point => [point[1], point[0]]);
+    }
+    return null;
+  }, [routes]);
+
+  // Draw selected ship route when available
+  useEffect(() => {
+    if (!mapLoaded || !map.current) return;
+
+    const existingSource = map.current.getSource('selected-ship-route');
+    const existingLayer = map.current.getLayer('selected-ship-route');
+
+    if (!routeCoordinates) {
+      // Remove layer if no route available
+      if (existingLayer) {
+        map.current.removeLayer('selected-ship-route');
+      }
+      if (existingSource) {
+        map.current.removeSource('selected-ship-route');
+      }
+      return;
+    }
+
+    const geoJsonData = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: routeCoordinates
+      }
+    };
+
+    // Update existing source if it exists, otherwise create new
+    if (existingSource) {
+      // Just update the data without removing/re-adding the layer
+      existingSource.setData(geoJsonData);
+    } else {
+      // First time - add source and layer
+      map.current.addSource('selected-ship-route', {
+        type: 'geojson',
+        data: geoJsonData
+      });
+
+      // Only add layer if it doesn't exist
+      if (!existingLayer) {
+        map.current.addLayer({
+          id: 'selected-ship-route',
+          type: 'line',
+          source: 'selected-ship-route',
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': '#FFCC80',  // Pastel yellow-orange
+            'line-width': 3,
+            'line-opacity': 0.6,  // Semi-transparent
+            'line-dasharray': [3, 3]  // Dotted line pattern [dash length, gap length]
+          }
+        });
+        console.log('Created route layer for selected ship');
+      }
+    }
+  }, [mapLoaded, routeCoordinates]);
 
   // Draw routes
   useEffect(() => {
@@ -873,7 +954,7 @@ const MapViewReal = ({
         type: 'fill',
         source: 'obstacles',
         paint: {
-          'fill-color': '#ff0000', // Red color for obstacles
+          'fill-color': '#FF6B6B', // Soft red color for obstacles
           'fill-opacity': 0.5
         }
       });
@@ -923,61 +1004,6 @@ const MapViewReal = ({
         />
       )}
 
-      {/* Legend */}
-      <div style={{
-        position: 'absolute',
-        bottom: '10px',
-        right: '10px',
-        background: 'rgba(0, 0, 0, 0.7)',
-        color: 'white',
-        padding: '10px',
-        borderRadius: '4px',
-        fontSize: '12px'
-      }}>
-        <div style={{ marginBottom: '5px' }}>
-          <span style={{
-            display: 'inline-block',
-            width: '12px',
-            height: '12px',
-            borderRadius: '50%',
-            backgroundColor: '#00ff00',
-            marginRight: '5px'
-          }} />
-          일반 선박
-        </div>
-        <div style={{ marginBottom: '5px' }}>
-          <span style={{
-            display: 'inline-block',
-            width: '12px',
-            height: '12px',
-            borderRadius: '50%',
-            backgroundColor: '#ff0000',
-            marginRight: '5px'
-          }} />
-          선택된 선박
-        </div>
-        <div style={{ marginBottom: '5px' }}>
-          <span style={{
-            display: 'inline-block',
-            width: '12px',
-            height: '12px',
-            borderRadius: '50%',
-            backgroundColor: '#3498db',
-            marginRight: '5px'
-          }} />
-          어장 위치
-        </div>
-        <div>
-          <span style={{
-            display: 'inline-block',
-            width: '12px',
-            height: '12px',
-            backgroundColor: '#2ecc71',
-            marginRight: '5px'
-          }} />
-          정박 위치
-        </div>
-      </div>
     </div>
   );
 };

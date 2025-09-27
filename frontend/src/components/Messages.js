@@ -27,15 +27,16 @@ const Messages = ({
           style={{
             width: '100%',
             padding: '0.6rem',
-            background: 'rgba(255, 255, 255, 0.1)',
+            background: 'rgba(255, 255, 255, 0.9)',
             backdropFilter: 'blur(10px)',
             WebkitBackdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
+            border: '1px solid rgba(102, 126, 234, 0.3)',
             borderRadius: '10px',
             fontSize: '0.9rem',
-            color: 'var(--text-primary)',
+            color: '#333',
             cursor: 'pointer',
-            transition: 'all 0.3s ease'
+            transition: 'all 0.3s ease',
+            outline: 'none'
           }}
         >
           <option value="all">전체 선박</option>

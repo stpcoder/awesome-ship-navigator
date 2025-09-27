@@ -12,6 +12,7 @@ from datetime import datetime
 import subprocess
 import os
 import sys
+import sqlite3
 
 from database import (
     get_db, ShipRoute as DBShipRoute, Ship as DBShip,
@@ -928,36 +929,25 @@ async def get_live_realtime_locations():
 
 @app.get("/api/eum/ships/realtime/demo", response_model=List[ShipRealtimeLocation])
 async def get_demo_realtime_locations(db: Session = Depends(get_db)):
-    """Get demo ship locations with simulated movement"""
+    """Get demo ship locations at their fixed positions"""
     from datetime import datetime
-    import math
-    import time
 
     # Get first 10 ships from DB (aligned with init data)
     ships = db.query(DBShip).limit(10).all()
 
-    # Current time for small animation
-    current_time = time.time()
-
     result = []
     for i, ship in enumerate(ships):
-        # Use docking position as base; if missing, fallback to fishing area or center
-        base_lat = ship.docking_lat or ship.fishing_area_lat or 35.955
-        base_lng = ship.docking_lng or ship.fishing_area_lng or 129.565
-
-        # Very small drift within ±0.001 to simulate slight movement
-        lat_offset = math.sin(current_time * 0.05 + i) * 0.001
-        lng_offset = math.cos(current_time * 0.05 + i) * 0.001
-
+        # Use actual latitude and longitude from database (current position)
+        # This ensures ships stay at their designated positions
         result.append(ShipRealtimeLocation(
             logDateTime=datetime.now().isoformat(),
             devId=ship.id,
             rcvDateTime=datetime.now().isoformat(),
-            lati=float(base_lat + lat_offset),
-            longi=float(base_lng + lng_offset),
-            azimuth=float((current_time * 10 + i * 30) % 360),
-            course=float((current_time * 5 + i * 45) % 360),
-            speed=abs(2.0 * math.sin(current_time * 0.05 + i))  # 0~2 knots idle drift
+            lati=float(ship.latitude),  # Use actual position from DB
+            longi=float(ship.longitude),  # Use actual position from DB
+            azimuth=0.0,  # No rotation
+            course=0.0,  # No movement
+            speed=0.0  # Stationary
         ))
 
     return result
@@ -1283,8 +1273,8 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
                 if hours:
                     user_departure_time = float(hours[0]) * 60  # Convert to minutes
 
-        # Get ship
-        ship = db.query(DBShip).first()  # Get first ship or specific ship based on context
+        # Get ship 1 specifically (only Ship 1 can use chatbot departure recommendations)
+        ship = db.query(DBShip).filter(DBShip.id == 1).first()  # Always get Ship 1
 
         if ship and route_type in ["departure", "arrival"]:
             endpoint = f"/api/route/{route_type}"
@@ -1529,8 +1519,40 @@ async def plan_departure_route(
     start_lat, start_lng = ship.docking_lat, ship.docking_lng
     goal_lat, goal_lng = ship.fishing_area_lat, ship.fishing_area_lng
 
-    # Get existing ships for collision avoidance
-    existing_ships = get_existing_ships(db, exclude_ship_id=ship_id)
+    # Get existing ships from simulation table for collision avoidance
+    # Load Ships 2-10 routes from ship_routes_simulation table
+    existing_ships = []
+    import sqlite3
+    import json as json_module
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, path_points, speed_knots
+        FROM ship_routes_simulation
+        WHERE ship_id != 'SHIP001'
+        ORDER BY departure_time
+    """)
+
+    for row in cursor.fetchall():
+        ship_id_db, ship_name, departure_str, path_json, speed = row
+        path = json_module.loads(path_json)
+        departure_dt = datetime.fromisoformat(departure_str)
+
+        # Create ShipRoute object for collision checking
+        existing_route = ShipRoute(
+            name=ship_name,
+            ship_id=ship_id_db,
+            start=tuple(path[0]) if path else (0, 0),
+            goal=tuple(path[-1]) if path else (0, 0),
+            path=[tuple(p) for p in path],
+            departure_time=departure_dt,
+            speed_knots=speed
+        )
+        existing_route.calculate_timestamps()
+        existing_ships.append(existing_route)
+
+    conn.close()
 
     # Find optimal path using lat/lng A* algorithm
     optimal_path = route_optimizer.find_path_astar(
@@ -1581,33 +1603,71 @@ async def plan_departure_route(
             "lng": point[1]
         })
 
-    # Save to database if requested
+    # Save to database
     save_to_db = True  # Always save to DB for playback
     if save_to_db:
-        # Remove existing route for this ship
-        existing = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
-        if existing:
-            db.delete(existing)
+        # For Ship 1 (SHIP001), save to simulation table
+        if ship_id == "SHIP001":
+            # Save to ship_routes_simulation table for Ship 1
+            import sqlite3
+            import json as json_module
+            from datetime import timedelta
 
-        # Create new route in DB
-        db_route = DBShipRoute(
-            ship_id=ship_id,
-            start_lat=ship.docking_lat,
-            start_lng=ship.docking_lng,
-            goal_lat=ship.fishing_area_lat,
-            goal_lng=ship.fishing_area_lng,
-            path=json.dumps(optimized_route.path),
-            actual_departure=optimized_route.departure_time,
-            recommended_departure=optimized_route.departure_time,
-            speed_knots=optimized_route.speed_knots,
-            path_length_pixels=optimized_route.path_length_pixels,
-            path_length_nm=optimized_route.path_length_nm,
-            speeds=json.dumps([optimized_route.speed_knots] * len(optimized_route.path)),
-            status='planned',
-            optimization_mode='flexible' if flexible_time else 'fixed'
-        )
-        db.add(db_route)
-        db.commit()
+            conn = sqlite3.connect('ship_routes.db')
+            cursor = conn.cursor()
+
+            # Remove existing route for Ship 1
+            cursor.execute("DELETE FROM ship_routes_simulation WHERE ship_id = ?", (ship_id,))
+
+            # Calculate arrival time
+            travel_time_hours = new_ship.path_length_nm / new_ship.speed_knots if new_ship.speed_knots > 0 else 0
+            departure_datetime = datetime.now() + timedelta(minutes=optimal_time)
+            arrival_datetime = departure_datetime + timedelta(hours=travel_time_hours)
+
+            # Insert new route for Ship 1
+            cursor.execute("""
+                INSERT INTO ship_routes_simulation
+                (ship_id, ship_name, departure_time, arrival_time, path_points,
+                 speed_knots, direction, total_distance_nm)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ship_id,
+                ship.name,
+                departure_datetime.isoformat(),
+                arrival_datetime.isoformat(),
+                json_module.dumps(optimal_path),
+                new_ship.speed_knots,
+                'to_fishing',  # departure = docking to fishing
+                new_ship.path_length_nm
+            ))
+
+            conn.commit()
+            conn.close()
+        else:
+            # For other ships, save to regular table
+            existing = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
+            if existing:
+                db.delete(existing)
+
+            # Create new route in DB
+            db_route = DBShipRoute(
+                ship_id=ship_id,
+                start_lat=ship.docking_lat,
+                start_lng=ship.docking_lng,
+                goal_lat=ship.fishing_area_lat,
+                goal_lng=ship.fishing_area_lng,
+                path=json.dumps(new_ship.path),
+                actual_departure=new_ship.departure_time,
+                recommended_departure=new_ship.departure_time,
+                speed_knots=new_ship.speed_knots,
+                path_length_pixels=new_ship.path_length_pixels if hasattr(new_ship, 'path_length_pixels') else 0,
+                path_length_nm=new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0,
+                speeds=json.dumps([new_ship.speed_knots] * len(new_ship.path)),
+                status='planned',
+                optimization_mode='flexible' if flexible_time else 'fixed'
+            )
+            db.add(db_route)
+            db.commit()
 
     return {
         "success": True,
@@ -1617,13 +1677,13 @@ async def plan_departure_route(
         "from": {"lat": ship.docking_lat, "lng": ship.docking_lng, "type": "docking"},
         "to": {"lat": ship.fishing_area_lat, "lng": ship.fishing_area_lng, "type": "fishing"},
         "path": path_lat_lng,
-        "path_points": optimized_route.path,  # For frontend display
-        "departure_time": optimized_route.departure_time,
-        "recommended_departure": optimized_route.departure_time,
-        "arrival_time": optimized_route.timestamps[-1] if optimized_route.timestamps else None,
-        "speed_knots": optimized_route.speed_knots,
-        "distance_nm": optimized_route.path_length_nm,
-        "total_distance_nm": optimized_route.path_length_nm,
+        "path_points": new_ship.path,  # For frontend display
+        "departure_time": new_ship.departure_time,
+        "recommended_departure": new_ship.departure_time,
+        "arrival_time": new_ship.timestamps[-1] if new_ship.timestamps else None,
+        "speed_knots": new_ship.speed_knots,
+        "distance_nm": new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0,
+        "total_distance_nm": new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0,
         "flexible_time": flexible_time,
         "optimization_type": "flexible" if flexible_time else "fixed",
         "saved_to_db": save_to_db
@@ -1648,81 +1708,159 @@ async def plan_arrival_route(
     if not ship.docking_lat or not ship.fishing_area_lat:
         raise HTTPException(status_code=400, detail="Ship doesn't have docking or fishing area defined")
 
-    # Convert coordinates to pixels (reverse of departure)
-    start_pixel = lat_lng_to_pixel(ship.fishing_area_lat, ship.fishing_area_lng)
-    goal_pixel = lat_lng_to_pixel(ship.docking_lat, ship.docking_lng)
+    # Use lat/lng coordinates directly (reverse of departure)
+    start_lat, start_lng = ship.fishing_area_lat, ship.fishing_area_lng
+    goal_lat, goal_lng = ship.docking_lat, ship.docking_lng
 
-    # Get existing ships for collision avoidance
-    existing_ships = get_existing_ships(db, exclude_ship_id=ship_id)
+    # Get existing ships from simulation table for collision avoidance
+    # Load Ships 2-10 routes from ship_routes_simulation table
+    existing_ships = []
+    import sqlite3
+    import json as json_module
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
 
-    # Find initial path avoiding static obstacles
-    initial_path = path_adjuster.find_initial_path(start_pixel, goal_pixel)
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, path_points, speed_knots
+        FROM ship_routes_simulation
+        WHERE ship_id != 'SHIP001'
+        ORDER BY departure_time
+    """)
 
-    if not initial_path:
+    for row in cursor.fetchall():
+        ship_id_db, ship_name, departure_str, path_json, speed = row
+        path = json_module.loads(path_json)
+        departure_dt = datetime.fromisoformat(departure_str)
+
+        # Create ShipRoute object for collision checking
+        existing_route = ShipRoute(
+            name=ship_name,
+            ship_id=ship_id_db,
+            start=tuple(path[0]) if path else (0, 0),
+            goal=tuple(path[-1]) if path else (0, 0),
+            path=[tuple(p) for p in path],
+            departure_time=departure_dt,
+            speed_knots=speed
+        )
+        existing_route.calculate_timestamps()
+        existing_ships.append(existing_route)
+
+    conn.close()
+
+    # Find optimal path using lat/lng A* algorithm
+    optimal_path = route_optimizer.find_path_astar(
+        start_lat, start_lng,
+        goal_lat, goal_lng,
+        departure_time=datetime.fromtimestamp(departure_time * 60) if departure_time else None
+    )
+
+    if not optimal_path:
         raise HTTPException(status_code=400, detail="No valid path found")
 
-    # Create ship route
+    # Create ship route with lat/lng coordinates
     new_ship = ShipRoute(
         name=f"{ship.name}_arrival",
         ship_id=ship_id,
-        start=start_pixel,
-        goal=goal_pixel,
-        path=initial_path,
+        start=(start_lat, start_lng),
+        goal=(goal_lat, goal_lng),
+        path=optimal_path,
         departure_time=departure_time or 0,
         speed_knots=ship.speed if hasattr(ship, 'speed') else 10.0
     )
-    new_ship.path_length_pixels = route_optimizer.calculate_path_length(initial_path)
     new_ship.calculate_timestamps()
 
-    # Optimize with flexible time if allowed
-    if flexible_time:
-        optimized_route = route_optimizer.optimize_route_flexible_time(
+    # Optimize departure time if flexible
+    if flexible_time and existing_ships:
+        optimal_time = route_optimizer.optimize_departure_time(
             new_ship, existing_ships,
-            time_window_start=0,
-            time_window_end=1440
+            time_window_minutes=1440  # 24 hours flexibility
         )
+        if optimal_time != departure_time:
+            # Recalculate path with new departure time
+            optimal_path = route_optimizer.find_path_astar(
+                start_lat, start_lng,
+                goal_lat, goal_lng,
+                departure_time=datetime.fromtimestamp(optimal_time * 60)
+            )
+            new_ship.departure_time = optimal_time
+            new_ship.path = optimal_path
+            new_ship.calculate_timestamps()
     else:
-        optimized_route = route_optimizer.optimize_route_fixed_time(
-            new_ship, existing_ships
-        )
+        optimal_time = departure_time or 0
 
-    # Convert path to lat/lng
+    # Path is already in lat/lng format
     path_lat_lng = []
-    for point in optimized_route.path:
-        lat_lng = pixel_to_lat_lng(point[0], point[1])
+    for point in optimal_path:
         path_lat_lng.append({
-            "lat": lat_lng["lat"],
-            "lng": lat_lng["lng"],
-            "pixel": {"x": point[0], "y": point[1]}
+            "lat": point[0],
+            "lng": point[1]
         })
 
-    # Save to database if requested
+    # Save to database
     save_to_db = True  # Always save to DB for playback
     if save_to_db:
-        # Remove existing route for this ship
-        existing = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
-        if existing:
-            db.delete(existing)
+        # For Ship 1 (SHIP001), save to simulation table
+        if ship_id == "SHIP001":
+            # Save to ship_routes_simulation table for Ship 1
+            import sqlite3
+            import json as json_module
+            from datetime import timedelta
 
-        # Create new route in DB
-        db_route = DBShipRoute(
-            ship_id=ship_id,
-            start_lat=ship.fishing_area_lat,
-            start_lng=ship.fishing_area_lng,
-            goal_lat=ship.docking_lat,
-            goal_lng=ship.docking_lng,
-            path=json.dumps(optimized_route.path),
-            actual_departure=optimized_route.departure_time,
-            recommended_departure=optimized_route.departure_time,
-            speed_knots=optimized_route.speed_knots,
-            path_length_pixels=optimized_route.path_length_pixels,
-            path_length_nm=optimized_route.path_length_nm,
-            speeds=json.dumps([optimized_route.speed_knots] * len(optimized_route.path)),
-            status='planned',
-            optimization_mode='flexible' if flexible_time else 'fixed'
-        )
-        db.add(db_route)
-        db.commit()
+            conn = sqlite3.connect('ship_routes.db')
+            cursor = conn.cursor()
+
+            # Remove existing route for Ship 1
+            cursor.execute("DELETE FROM ship_routes_simulation WHERE ship_id = ?", (ship_id,))
+
+            # Calculate arrival time
+            travel_time_hours = new_ship.path_length_nm / new_ship.speed_knots if new_ship.speed_knots > 0 else 0
+            departure_datetime = datetime.now() + timedelta(minutes=optimal_time)
+            arrival_datetime = departure_datetime + timedelta(hours=travel_time_hours)
+
+            # Insert new route for Ship 1
+            cursor.execute("""
+                INSERT INTO ship_routes_simulation
+                (ship_id, ship_name, departure_time, arrival_time, path_points,
+                 speed_knots, direction, total_distance_nm)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ship_id,
+                ship.name,
+                departure_datetime.isoformat(),
+                arrival_datetime.isoformat(),
+                json_module.dumps(optimal_path),
+                new_ship.speed_knots,
+                'to_docking',  # arrival = fishing to docking
+                new_ship.path_length_nm
+            ))
+
+            conn.commit()
+            conn.close()
+        else:
+            # For other ships, save to regular table
+            existing = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
+            if existing:
+                db.delete(existing)
+
+            # Create new route in DB
+            db_route = DBShipRoute(
+                ship_id=ship_id,
+                start_lat=ship.fishing_area_lat,
+                start_lng=ship.fishing_area_lng,
+                goal_lat=ship.docking_lat,
+                goal_lng=ship.docking_lng,
+                path=json.dumps(new_ship.path),
+                actual_departure=new_ship.departure_time,
+                recommended_departure=new_ship.departure_time,
+                speed_knots=new_ship.speed_knots,
+                path_length_pixels=new_ship.path_length_pixels if hasattr(new_ship, 'path_length_pixels') else 0,
+                path_length_nm=new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0,
+                speeds=json.dumps([new_ship.speed_knots] * len(new_ship.path)),
+                status='planned',
+                optimization_mode='flexible' if flexible_time else 'fixed'
+            )
+            db.add(db_route)
+            db.commit()
 
     return {
         "success": True,
@@ -1732,13 +1870,13 @@ async def plan_arrival_route(
         "from": {"lat": ship.fishing_area_lat, "lng": ship.fishing_area_lng, "type": "fishing"},
         "to": {"lat": ship.docking_lat, "lng": ship.docking_lng, "type": "docking"},
         "path": path_lat_lng,
-        "path_points": optimized_route.path,  # For frontend display
-        "departure_time": optimized_route.departure_time,
-        "recommended_departure": optimized_route.departure_time,
-        "arrival_time": optimized_route.timestamps[-1] if optimized_route.timestamps else None,
-        "speed_knots": optimized_route.speed_knots,
-        "distance_nm": optimized_route.path_length_nm,
-        "total_distance_nm": optimized_route.path_length_nm,
+        "path_points": new_ship.path,  # For frontend display
+        "departure_time": new_ship.departure_time,
+        "recommended_departure": new_ship.departure_time,
+        "arrival_time": new_ship.timestamps[-1] if new_ship.timestamps else None,
+        "speed_knots": new_ship.speed_knots,
+        "distance_nm": new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0,
+        "total_distance_nm": new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0,
         "flexible_time": flexible_time,
         "optimization_type": "flexible" if flexible_time else "fixed",
         "saved_to_db": save_to_db
@@ -2095,6 +2233,341 @@ async def delete_message(
     db.commit()
 
     return {"message": "Message deleted successfully"}
+
+
+# =======================
+# Simulation APIs
+# =======================
+
+# Global simulation state
+simulation_state = {
+    "is_running": False,
+    "start_time": None,
+    "simulation_time": None,
+    "speed_multiplier": 1.0,  # 1x, 2x, 4x speed
+    "elapsed_minutes": 0  # Track elapsed simulation minutes
+}
+
+@app.post("/api/simulation/start")
+async def start_simulation(request: dict = {}):
+    """Start the simulation"""
+    global simulation_state
+
+    speed = request.get("speed_multiplier", 1.0)
+
+    # If already running, just update speed
+    if simulation_state["is_running"]:
+        simulation_state["speed_multiplier"] = speed
+        return {"status": "speed_updated", "speed_multiplier": speed}
+
+    # Start fresh simulation
+    base_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)  # Start at midnight (00:00)
+    simulation_state["is_running"] = True
+    simulation_state["start_time"] = datetime.now()  # Real world start time
+    simulation_state["simulation_time"] = base_time  # Simulation world time
+    simulation_state["speed_multiplier"] = speed
+    simulation_state["elapsed_minutes"] = 0
+
+    return {"status": "started", "start_time": simulation_state["start_time"].isoformat()}
+
+@app.post("/api/simulation/stop")
+async def stop_simulation():
+    """Stop/Pause the simulation"""
+    global simulation_state
+
+    simulation_state["is_running"] = False
+
+    return {"status": "stopped"}
+
+@app.post("/api/simulation/reset")
+async def reset_simulation():
+    """Reset simulation to initial state"""
+    global simulation_state
+
+    simulation_state["is_running"] = False
+    simulation_state["start_time"] = None
+    simulation_state["simulation_time"] = None
+    simulation_state["speed_multiplier"] = 1.0
+    simulation_state["elapsed_minutes"] = 0
+
+    return {"status": "reset"}
+
+# Removed set-time endpoint - no longer needed without drag bar
+
+@app.get("/api/simulation/status")
+async def get_simulation_status():
+    """Get current simulation status"""
+    global simulation_state
+    from datetime import timedelta
+
+    # Update simulation time if running
+    if simulation_state["is_running"] and simulation_state["start_time"]:
+        # Calculate elapsed real time in seconds
+        elapsed_real_seconds = (datetime.now() - simulation_state["start_time"]).total_seconds()
+        # Convert to simulation minutes based on speed multiplier
+        elapsed_sim_minutes = (elapsed_real_seconds / 60.0) * simulation_state["speed_multiplier"]
+        simulation_state["elapsed_minutes"] = elapsed_sim_minutes
+
+        # Update simulation time
+        base_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        simulation_state["simulation_time"] = base_time + timedelta(minutes=elapsed_sim_minutes)
+
+    return {
+        "is_running": simulation_state["is_running"],
+        "simulation_time": simulation_state["simulation_time"].isoformat() if simulation_state["simulation_time"] else None,
+        "start_time": simulation_state["start_time"].isoformat() if simulation_state["start_time"] else None,
+        "speed_multiplier": simulation_state["speed_multiplier"],
+        "elapsed_minutes": simulation_state["elapsed_minutes"]
+    }
+
+@app.get("/api/simulation/ship-positions")
+async def get_simulation_ship_positions(db: Session = Depends(get_db)):
+    """Get ship positions based on simulation time and routes"""
+    global simulation_state
+    from datetime import timedelta
+
+    # Update simulation time if running
+    if simulation_state["is_running"] and simulation_state["start_time"]:
+        elapsed_real_seconds = (datetime.now() - simulation_state["start_time"]).total_seconds()
+        elapsed_sim_minutes = (elapsed_real_seconds / 60.0) * simulation_state["speed_multiplier"]
+        simulation_state["elapsed_minutes"] = elapsed_sim_minutes
+
+        base_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        simulation_state["simulation_time"] = base_time + timedelta(minutes=elapsed_sim_minutes)
+
+    if not simulation_state["simulation_time"]:
+        # Return current positions if simulation not started
+        return await get_demo_realtime_locations(db)
+
+    current_time = simulation_state["simulation_time"]
+
+    # Get all ship routes from simulation table
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, arrival_time,
+               path_points, speed_knots, direction
+        FROM ship_routes_simulation
+        ORDER BY departure_time
+    """)
+
+    routes = cursor.fetchall()
+    positions = []
+
+    for route in routes:
+        ship_id, ship_name, departure_str, arrival_str, path_json, speed, direction = route
+        departure_time = datetime.fromisoformat(departure_str)
+        arrival_time = datetime.fromisoformat(arrival_str) if arrival_str else None
+        path = json.loads(path_json)
+
+        # Calculate current position based on time
+        if current_time < departure_time:
+            # Ship hasn't departed yet - use start position
+            lat, lng = path[0]
+        elif arrival_time and current_time >= arrival_time:
+            # Ship has arrived - use end position
+            lat, lng = path[-1]
+        else:
+            # Ship is in transit - interpolate position
+            elapsed = (current_time - departure_time).total_seconds() / 3600  # hours
+            distance_traveled = speed * elapsed  # nautical miles
+
+            # Find position along path
+            total_distance = 0
+            lat, lng = path[0]
+
+            for i in range(len(path) - 1):
+                from core_optimizer_latlng import haversine_distance
+                segment_distance = haversine_distance(
+                    path[i][0], path[i][1],
+                    path[i+1][0], path[i+1][1]
+                )
+
+                if total_distance + segment_distance >= distance_traveled:
+                    # Ship is on this segment
+                    fraction = (distance_traveled - total_distance) / segment_distance
+                    lat = path[i][0] + (path[i+1][0] - path[i][0]) * fraction
+                    lng = path[i][1] + (path[i+1][1] - path[i][1]) * fraction
+                    break
+
+                total_distance += segment_distance
+            else:
+                # Ship has reached the end
+                lat, lng = path[-1]
+
+        # Get ship ID number for devId
+        ship_num = int(ship_id.replace('SHIP', ''))
+
+        positions.append(ShipRealtimeLocation(
+            logDateTime=current_time.isoformat(),
+            devId=ship_num,
+            rcvDateTime=current_time.isoformat(),
+            lati=lat,
+            longi=lng,
+            azimuth=0.0,
+            course=0.0,
+            speed=speed if departure_time <= current_time < arrival_time else 0.0
+        ))
+
+    # If Ship 1 doesn't have a route in simulation table, add it as stationary
+    # Otherwise, Ship 1's position was already calculated in the loop above
+    if not any(p.devId == 1 for p in positions):
+        ship1 = db.query(DBShip).filter(DBShip.id == 1).first()
+        if ship1:
+            positions.insert(0, ShipRealtimeLocation(
+                logDateTime=current_time.isoformat(),
+                devId=1,
+                rcvDateTime=current_time.isoformat(),
+                lati=ship1.latitude,
+                longi=ship1.longitude,
+                azimuth=0.0,
+                course=0.0,
+                speed=0.0
+            ))
+
+    conn.close()
+    return positions
+
+@app.get("/api/simulation/routes")
+async def get_simulation_routes():
+    """Get all simulation routes"""
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, arrival_time,
+               path_points, speed_knots, direction, total_distance_nm
+        FROM ship_routes_simulation
+        ORDER BY departure_time
+    """)
+
+    routes = cursor.fetchall()
+    result = []
+
+    for route in routes:
+        ship_id, ship_name, departure, arrival, path_json, speed, direction, distance = route
+        result.append({
+            "ship_id": ship_id,
+            "ship_name": ship_name,
+            "departure_time": departure,
+            "arrival_time": arrival,
+            "path": json.loads(path_json),
+            "speed_knots": speed,
+            "direction": direction,
+            "total_distance_nm": distance
+        })
+
+    conn.close()
+    return result
+
+@app.get("/api/simulation/schedules")
+async def get_ship_schedules():
+    """Get all ship schedules from database"""
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, arrival_time,
+               path_points, speed_knots, direction, total_distance_nm
+        FROM ship_routes_simulation
+        ORDER BY departure_time
+    """)
+
+    schedules = []
+    for row in cursor.fetchall():
+        ship_id, ship_name, departure_time, arrival_time, path_json, speed, direction, distance = row
+        path = json.loads(path_json)
+
+        # Determine trip type based on direction
+        trip_type = 'departure' if direction == 'departure' else 'arrival'
+
+        # Extract times
+        dep_time = datetime.fromisoformat(departure_time).strftime("%H:%M")
+        arr_time = datetime.fromisoformat(arrival_time).strftime("%H:%M")
+
+        # Get locations from path
+        start_location = path[0] if path else [35.98, 129.56]
+        end_location = path[-1] if path else [35.99, 129.57]
+
+        schedules.append({
+            "shipId": ship_id,
+            "name": ship_name,
+            "type": "어선" if "어선" in ship_name else "화물선",
+            "departureTime": dep_time,
+            "arrivalTime": arr_time,
+            "tripType": trip_type,
+            "dockingLocation": {
+                "lat": start_location[0] if trip_type == 'departure' else end_location[0],
+                "lng": start_location[1] if trip_type == 'departure' else end_location[1]
+            },
+            "fishingLocation": {
+                "lat": end_location[0] if trip_type == 'departure' else start_location[0],
+                "lng": end_location[1] if trip_type == 'departure' else start_location[1]
+            } if "어선" in ship_name else None,
+            "speed": speed,  # Add speed in knots
+            "status": "scheduled"  # We can enhance this based on current simulation time
+        })
+
+    conn.close()
+    return schedules
+
+@app.get("/api/simulation/ship-route/{ship_id}")
+async def get_ship_simulation_route(ship_id: str):
+    """Get simulation route for a specific ship"""
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
+
+    # Try to find route for this ship
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, arrival_time,
+               path_points, speed_knots, direction, total_distance_nm
+        FROM ship_routes_simulation
+        WHERE ship_id = ?
+    """, (ship_id,))
+
+    route = cursor.fetchone()
+    conn.close()
+
+    if not route:
+        # Try with SHIP prefix if not found
+        ship_id_with_prefix = f"SHIP{ship_id:03d}" if ship_id.isdigit() else ship_id
+        conn = sqlite3.connect('ship_routes.db')
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ship_id, ship_name, departure_time, arrival_time,
+                   path_points, speed_knots, direction, total_distance_nm
+            FROM ship_routes_simulation
+            WHERE ship_id = ?
+        """, (ship_id_with_prefix,))
+        route = cursor.fetchone()
+        conn.close()
+
+        if not route:
+            return None
+
+    ship_id, ship_name, departure, arrival, path_json, speed, direction, distance = route
+    return {
+        "ship_id": ship_id,
+        "ship_name": ship_name,
+        "departure_time": departure,
+        "arrival_time": arrival,
+        "path": json.loads(path_json),
+        "speed_knots": speed,
+        "direction": direction,
+        "total_distance_nm": distance
+    }
+
+@app.post("/api/simulation/generate-routes")
+async def generate_simulation_routes():
+    """Generate new routes for simulation"""
+    import subprocess
+    result = subprocess.run(['python', 'generate_ship_routes.py'], capture_output=True, text=True)
+
+    if result.returncode == 0:
+        return {"status": "success", "message": "Routes generated successfully"}
+    else:
+        return {"status": "error", "message": result.stderr}
 
 
 if __name__ == "__main__":

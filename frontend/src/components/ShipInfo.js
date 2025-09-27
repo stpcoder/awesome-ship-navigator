@@ -99,15 +99,16 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
           style={{
             width: '100%',
             padding: '0.6rem',
-            background: 'rgba(255, 255, 255, 0.1)',
+            background: 'rgba(255, 255, 255, 0.9)',
             backdropFilter: 'blur(10px)',
             WebkitBackdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
+            border: '1px solid rgba(102, 126, 234, 0.3)',
             borderRadius: '10px',
             fontSize: '0.95rem',
-            color: 'var(--text-primary)',
+            color: '#333',
             cursor: 'pointer',
-            transition: 'all 0.3s ease'
+            transition: 'all 0.3s ease',
+            outline: 'none'
           }}
         >
           <option value="">선박 선택...</option>
@@ -132,27 +133,11 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
           overflowY: editMode ? 'auto' : 'visible',
           color: 'var(--text-primary)'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <h4 style={{ margin: '0' }}>상세 정보</h4>
-            <button
-              onClick={() => setEditMode(!editMode)}
-              style={{
-                padding: '4px 12px',
-                background: editMode ? '#dc3545' : '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '0.85rem'
-              }}
-            >
-              {editMode ? '취소' : '위치 편집'}
-            </button>
-          </div>
+          {/* Removed header section with 상세 정보 text and 위치 편집 button */}
 
           {!editMode && (
             <div style={{ fontSize: '0.9rem' }}>
-              <p style={{ margin: '0.3rem 0', fontWeight: '600', color: '#5dade2' }}>
+              <p style={{ margin: '0.3rem 0', fontWeight: '600', color: '#667eea' }}>
                 {selectedShip.name} ({selectedShip.shipId})
               </p>
               {(selectedShip.length || selectedShip.breath || selectedShip.depth || selectedShip.gt) && (

@@ -1,241 +1,307 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Ship, Anchor, MapPin, Clock } from 'lucide-react';
 
-const RoutePlanner = ({ ships, selectedShip, onPlanRoute }) => {
-  const [departureTime, setDepartureTime] = useState(30);
-  const [tripMode, setTripMode] = useState('departure'); // 'departure' or 'arrival'
-  const [timeAcceptance, setTimeAcceptance] = useState('O'); // 'O' or 'X'
+const API_BASE = 'http://localhost:8000';
 
-  const handlePlanRoute = () => {
+const RoutePlanner = ({ ships, selectedShip, onSelectShip, onShipRouteClick }) => {
+  const [shipSchedules, setShipSchedules] = useState([]);
+  const [selectedSchedule, setSelectedSchedule] = useState(null);
+
+  // Clear selection when selectedShip changes
+  useEffect(() => {
     if (!selectedShip) {
-      alert('먼저 선박을 선택해주세요');
-      return;
+      setSelectedSchedule(null);
     }
+  }, [selectedShip]);
 
-    // Determine start and goal based on trip mode
-    let startPosition, goalPosition;
+  // Fetch ship schedules from database
+  useEffect(() => {
+    const fetchSchedules = async () => {
+      try {
+        const response = await axios.get(`${API_BASE}/api/simulation/schedules`);
+        setShipSchedules(response.data);
+      } catch (error) {
+        console.error('Failed to fetch ship schedules:', error);
+        // Fallback to ships data with calculated schedules
+        generateSchedulesFromShips();
+      }
+    };
 
-    if (tripMode === 'departure') {
-      // 출항: 정박지 → 어장
-      if (!selectedShip.dockingLat || !selectedShip.dockingLng) {
-        alert('선택한 선박의 정박 위치가 설정되지 않았습니다.');
-        return;
-      }
-      if (!selectedShip.fishingAreaLat || !selectedShip.fishingAreaLng) {
-        alert('선택한 선박의 어장 위치가 설정되지 않았습니다.');
-        return;
-      }
-      startPosition = [selectedShip.dockingLat, selectedShip.dockingLng];
-      goalPosition = [selectedShip.fishingAreaLat, selectedShip.fishingAreaLng];
-    } else {
-      // 입항: 어장 → 정박지
-      if (!selectedShip.fishingAreaLat || !selectedShip.fishingAreaLng) {
-        alert('선택한 선박의 어장 위치가 설정되지 않았습니다.');
-        return;
-      }
-      if (!selectedShip.dockingLat || !selectedShip.dockingLng) {
-        alert('선택한 선박의 정박 위치가 설정되지 않았습니다.');
-        return;
-      }
-      startPosition = [selectedShip.fishingAreaLat, selectedShip.fishingAreaLng];
-      goalPosition = [selectedShip.dockingLat, selectedShip.dockingLng];
-    }
+    const generateSchedulesFromShips = () => {
+      // Generate schedules from ships data for display
+      const schedules = ships.map((ship, index) => ({
+        shipId: ship.shipId || ship.ship_id,
+        name: ship.name || ship.shipName,
+        type: ship.type || '화물선',
+        departureTime: `00:${String(index * 5).padStart(2, '0')}`, // 5분 간격
+        arrivalTime: `00:${String(index * 5 + 7).padStart(2, '0')}`, // 7분 항해
+        speed: 10 + index, // 속도 (노트)
+        tripType: index % 2 === 0 ? 'departure' : 'arrival', // 출항/입항 교대
+        dockingLocation: {
+          lat: ship.dockingLat || ship.lati,
+          lng: ship.dockingLng || ship.longi
+        },
+        fishingLocation: ship.type === '어선' ? {
+          lat: ship.fishingAreaLat || ship.lati + 0.01,
+          lng: ship.fishingAreaLng || ship.longi + 0.01
+        } : null,
+        status: 'scheduled' // scheduled, departed, arrived
+      }));
+      setShipSchedules(schedules);
+    };
 
-    // Call the planning function with acceptance mode
-    onPlanRoute(
-      selectedShip.shipId,
-      departureTime,
-      timeAcceptance === 'O', // true if accepting time recommendations
-      startPosition,
-      goalPosition
+    fetchSchedules();
+  }, [ships]);
+
+  const handleScheduleClick = (schedule) => {
+    setSelectedSchedule(schedule);
+
+    // Find and select the ship
+    const ship = ships.find(s =>
+      s.shipId === schedule.shipId ||
+      s.ship_id === schedule.shipId ||
+      s.name === schedule.name
     );
+
+    if (ship && onSelectShip) {
+      onSelectShip(ship);
+    }
+
+    // Trigger route display if available
+    if (onShipRouteClick) {
+      onShipRouteClick(schedule.shipId);
+    }
+  };
+
+  const formatLocation = (location) => {
+    if (!location) return 'N/A';
+    return `(${location.lat?.toFixed(2)}, ${location.lng?.toFixed(2)})`;
+  };
+
+  const getTripTypeLabel = (type) => {
+    return type === 'departure' ? '출항' : '입항';
+  };
+
+  const getTripTypeColor = (type) => {
+    return type === 'departure' ? '#4CAF50' : '#667eea';
+  };
+
+  const getStatusColor = (status) => {
+    switch(status) {
+      case 'scheduled': return '#FFC107';
+      case 'departed': return '#4CAF50';
+      case 'arrived': return '#9E9E9E';
+      default: return '#666';
+    }
   };
 
   return (
-    <div className="panel">
-      <h3>경로 계획</h3>
+    <div className="panel" style={{
+      height: 'auto',
+      minHeight: '400px',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+      <h3 style={{
+        marginBottom: '1rem'
+      }}>
+        출항 스케줄
+      </h3>
 
-      <div className="route-planner">
-        {/* Selected Ship Display */}
-        {selectedShip ? (
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column'
+      }}>
+        {shipSchedules.length === 0 ? (
           <div style={{
-            padding: '0.75rem',
-            background: 'rgba(102, 126, 234, 0.1)',
-            borderRadius: '10px',
-            marginBottom: '1rem'
+            padding: '1rem',
+            textAlign: 'center',
+            color: 'var(--text-secondary)',
+            fontSize: '0.9rem'
           }}>
-            <div style={{ fontWeight: '600', fontSize: '0.95rem', marginBottom: '0.25rem' }}>
-              선택된 선박
-            </div>
-            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-              {selectedShip.name} ({selectedShip.shipId}) - {selectedShip.type}
-            </div>
+            스케줄 정보를 불러오는 중...
           </div>
         ) : (
-          <div style={{
-            padding: '0.75rem',
-            background: 'rgba(220, 53, 69, 0.1)',
-            borderRadius: '10px',
-            marginBottom: '1rem',
-            color: 'var(--text-secondary)',
-            fontSize: '0.9rem',
-            textAlign: 'center'
-          }}>
-            좌측에서 선박을 먼저 선택해주세요
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {shipSchedules.map((schedule, index) => (
+              <div
+                key={schedule.shipId}
+                onClick={() => handleScheduleClick(schedule)}
+                style={{
+                  padding: '0.75rem',
+                  background: selectedSchedule?.shipId === schedule.shipId
+                    ? 'linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2))'
+                    : 'rgba(255, 255, 255, 0.05)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  border: selectedSchedule?.shipId === schedule.shipId
+                    ? '1px solid rgba(102, 126, 234, 0.5)'
+                    : '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '12px',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                  transform: selectedSchedule?.shipId === schedule.shipId ? 'scale(1.02)' : 'scale(1)',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedSchedule?.shipId !== schedule.shipId) {
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                    e.currentTarget.style.transform = 'scale(1.01)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedSchedule?.shipId !== schedule.shipId) {
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                    e.currentTarget.style.transform = 'scale(1)';
+                  }
+                }}
+              >
+                {/* Ship Header */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: '0.5rem'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}>
+                    <Ship size={16} color="#667eea" />
+                    <span style={{
+                      fontWeight: '600',
+                      fontSize: '0.95rem',
+                      color: 'var(--text-primary)'
+                    }}>
+                      {schedule.name}
+                    </span>
+                    <span style={{
+                      fontSize: '0.8rem',
+                      color: 'var(--text-secondary)',
+                      padding: '0.15rem 0.4rem',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      borderRadius: '4px'
+                    }}>
+                      {schedule.shipId}
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '0.85rem',
+                    padding: '0.2rem 0.5rem',
+                    background: getTripTypeColor(schedule.tripType),
+                    color: 'white',
+                    borderRadius: '6px',
+                    fontWeight: '500'
+                  }}>
+                    {getTripTypeLabel(schedule.tripType)}
+                  </span>
+                </div>
+
+                {/* Schedule Times */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  marginBottom: '0.4rem',
+                  fontSize: '0.9rem'
+                }}>
+                  <Clock size={14} color="#FF6B00" />
+                  <span style={{ color: 'var(--text-primary)' }}>
+                    {schedule.departureTime} 출발 → {schedule.arrivalTime} 도착
+                  </span>
+                </div>
+
+                {/* Locations */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.3rem',
+                  fontSize: '0.85rem',
+                  color: 'var(--text-secondary)'
+                }}>
+                  {schedule.tripType === 'departure' ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <Anchor size={12} />
+                        <span>정박지: {formatLocation(schedule.dockingLocation)}</span>
+                      </div>
+                      {schedule.fishingLocation && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <MapPin size={12} />
+                          <span>어장: {formatLocation(schedule.fishingLocation)}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {schedule.fishingLocation && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <MapPin size={12} />
+                          <span>어장: {formatLocation(schedule.fishingLocation)}</span>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <Anchor size={12} />
+                        <span>정박지: {formatLocation(schedule.dockingLocation)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
-
-        {/* Trip Mode Selection */}
-        <div className="input-group">
-          <label style={{ marginBottom: '0.5rem', fontWeight: '500' }}>운항 모드</label>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              onClick={() => setTripMode('departure')}
-              style={{
-                flex: 1,
-                padding: '0.6rem',
-                background: tripMode === 'departure'
-                  ? 'linear-gradient(135deg, rgba(102, 126, 234, 0.7), rgba(118, 75, 162, 0.7))'
-                  : 'rgba(108, 117, 125, 0.7)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                fontSize: '0.9rem',
-                fontWeight: '500'
-              }}
-            >
-              출항 (정박지 → 어장)
-            </button>
-            <button
-              onClick={() => setTripMode('arrival')}
-              style={{
-                flex: 1,
-                padding: '0.6rem',
-                background: tripMode === 'arrival'
-                  ? 'linear-gradient(135deg, rgba(102, 126, 234, 0.7), rgba(118, 75, 162, 0.7))'
-                  : 'rgba(108, 117, 125, 0.7)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                fontSize: '0.9rem',
-                fontWeight: '500'
-              }}
-            >
-              입항 (어장 → 정박지)
-            </button>
-          </div>
-        </div>
-
-        {/* Departure Time */}
-        <div className="input-group">
-          <label style={{ marginBottom: '0.5rem', fontWeight: '500' }}>출발 시간 (분 후)</label>
-          <input
-            type="number"
-            value={departureTime}
-            onChange={(e) => setDepartureTime(Number(e.target.value))}
-            min="0"
-            max="180"
-            style={{
-              padding: '0.6rem',
-              background: 'rgba(255, 255, 255, 0.1)',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              borderRadius: '10px',
-              fontSize: '0.95rem',
-              color: 'var(--text-primary)',
-              transition: 'all 0.3s ease'
-            }}
-          />
-        </div>
-
-        {/* Time Acceptance */}
-        <div className="input-group">
-          <label style={{ marginBottom: '0.5rem', fontWeight: '500' }}>시간 수용 여부</label>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              onClick={() => setTimeAcceptance('O')}
-              style={{
-                flex: 1,
-                padding: '0.6rem',
-                background: timeAcceptance === 'O'
-                  ? 'rgba(40, 167, 69, 0.7)'
-                  : 'rgba(108, 117, 125, 0.7)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                fontSize: '0.9rem',
-                fontWeight: '500'
-              }}
-            >
-              O (최적 시간 추천)
-            </button>
-            <button
-              onClick={() => setTimeAcceptance('X')}
-              style={{
-                flex: 1,
-                padding: '0.6rem',
-                background: timeAcceptance === 'X'
-                  ? 'rgba(220, 53, 69, 0.7)'
-                  : 'rgba(108, 117, 125, 0.7)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                fontSize: '0.9rem',
-                fontWeight: '500'
-              }}
-            >
-              X (입력 시간 유지)
-            </button>
-          </div>
-          <div style={{
-            fontSize: '0.85rem',
-            color: 'var(--text-secondary)',
-            marginTop: '0.5rem',
-            padding: '0.5rem',
-            background: 'rgba(255, 255, 255, 0.05)',
-            borderRadius: '8px'
-          }}>
-            {timeAcceptance === 'O'
-              ? '시스템이 추천하는 최적 시간으로 출발합니다.'
-              : '입력한 시간에 출발하며 필요시 경로를 조정합니다.'}
-          </div>
-        </div>
-
-        {/* Plan Route Button */}
-        <div className="button-group" style={{ marginTop: '1rem' }}>
-          <button
-            className="btn btn-primary"
-            onClick={handlePlanRoute}
-            disabled={!selectedShip}
-            style={{
-              width: '100%',
-              padding: '0.8rem',
-              fontSize: '1rem',
-              fontWeight: '600',
-              opacity: selectedShip ? 1 : 0.5,
-              cursor: selectedShip ? 'pointer' : 'not-allowed'
-            }}
-          >
-            경로 계획 시작
-          </button>
-        </div>
       </div>
+
+      {/* Selected Schedule Details */}
+      {selectedSchedule && (
+        <div style={{
+          marginTop: '1rem',
+          padding: '0.75rem',
+          background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1))',
+          borderRadius: '10px',
+          border: '1px solid rgba(102, 126, 234, 0.3)',
+          fontSize: '0.85rem'
+        }}>
+          <div style={{ fontWeight: '600', marginBottom: '0.5rem', color: '#667eea' }}>
+            선택된 스케줄 상세
+          </div>
+          <div style={{ marginBottom: '0.3rem' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>선박명: </span>
+            <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>
+              {selectedSchedule.name} ({selectedSchedule.shipId})
+            </span>
+          </div>
+          <div style={{ marginBottom: '0.3rem' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>운항: </span>
+            <span style={{ color: getTripTypeColor(selectedSchedule.tripType), fontWeight: '500' }}>
+              {selectedSchedule.departureTime} {getTripTypeLabel(selectedSchedule.tripType)}
+            </span>
+          </div>
+          <div style={{ marginBottom: '0.3rem' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>경로: </span>
+            <span style={{ color: 'var(--text-primary)' }}>
+              {selectedSchedule.tripType === 'departure' ? '정박지 → 어장' : '어장 → 정박지'}
+            </span>
+          </div>
+          <div style={{ marginBottom: '0.3rem' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>도착 예정: </span>
+            <span style={{ color: 'var(--text-primary)' }}>
+              {selectedSchedule.arrivalTime}
+            </span>
+          </div>
+          {selectedSchedule.speed && (
+            <div>
+              <span style={{ color: 'var(--text-secondary)' }}>속도: </span>
+              <span style={{ color: 'var(--text-primary)' }}>
+                {selectedSchedule.speed} 노트
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

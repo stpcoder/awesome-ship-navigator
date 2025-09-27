@@ -90,6 +90,12 @@ class Ship(Base):
     depth = Column(Float)
     gt = Column(Float)
 
+    # Current position
+    latitude = Column(Float)
+    longitude = Column(Float)
+    speed = Column(Float, default=0)
+    course = Column(Float, default=0)
+
     # Fishing area coordinates
     fishing_area_lat = Column(Float)
     fishing_area_lng = Column(Float)
