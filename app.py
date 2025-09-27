@@ -933,38 +933,31 @@ async def get_demo_realtime_locations(db: Session = Depends(get_db)):
     import math
     import time
 
-    # Get ship list from DB
-    ships = db.query(DBShip).limit(20).all()
+    # Get first 10 ships from DB (aligned with init data)
+    ships = db.query(DBShip).limit(10).all()
 
-    # Current time for animation
+    # Current time for small animation
     current_time = time.time()
 
     result = []
     for i, ship in enumerate(ships):
-        # Create animated positions for demo
-        base_lat = 36.0 + (i * 0.01)
-        base_lng = 129.4 + (i * 0.01)
+        # Use docking position as base; if missing, fallback to fishing area or center
+        base_lat = ship.docking_lat or ship.fishing_area_lat or 35.955
+        base_lng = ship.docking_lng or ship.fishing_area_lng or 129.565
 
-        # Add circular movement for some ships
-        if i % 3 == 0:
-            angle = (current_time * 0.1 + i) % (2 * math.pi)
-            lat_offset = math.sin(angle) * 0.02
-            lng_offset = math.cos(angle) * 0.02
-        # Linear movement for others
-        else:
-            movement = math.sin(current_time * 0.05 + i) * 0.01
-            lat_offset = movement
-            lng_offset = movement * 0.5
+        # Very small drift within ±0.001 to simulate slight movement
+        lat_offset = math.sin(current_time * 0.05 + i) * 0.001
+        lng_offset = math.cos(current_time * 0.05 + i) * 0.001
 
         result.append(ShipRealtimeLocation(
             logDateTime=datetime.now().isoformat(),
             devId=ship.id,
             rcvDateTime=datetime.now().isoformat(),
-            lati=base_lat + lat_offset,
-            longi=base_lng + lng_offset,
+            lati=float(base_lat + lat_offset),
+            longi=float(base_lng + lng_offset),
             azimuth=float((current_time * 10 + i * 30) % 360),
             course=float((current_time * 5 + i * 45) % 360),
-            speed=8.0 + math.sin(current_time * 0.1 + i) * 3.0
+            speed=abs(2.0 * math.sin(current_time * 0.05 + i))  # 0~2 knots idle drift
         ))
 
     return result

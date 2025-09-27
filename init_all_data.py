@@ -30,27 +30,46 @@ def init_ships():
 
     ship_types = ["어선", "화물선", "여객선", "예인선", "기타"]
 
-    for i in range(30):
-        ship_id = f"EUM{i+1:03d}"  # EUM001, EUM002, etc.
-        ship_type = random.choice(ship_types) if i % 5 != 0 else "어선"  # Every 5th is fishing vessel
+    # Limit to 10 demo ships and position around '해성호' docking location within ±0.01 diagonally
+    base_docking_lat = None
+    base_docking_lng = None
 
-        # Generate random positions within the map bounds
-        # Map bounds: lat 35.924 to 35.9938, lng 129.547 to 129.634
-        # Fishing areas - slightly offshore (only for fishing vessels)
+    for i in range(10):
+        ship_id = f"EUM{i+1:03d}"  # EUM001, EUM002, etc.
+        # Ensure some fishing vessels exist
+        ship_type = random.choice(ship_types) if i % 3 != 0 else "어선"
+
+        # Determine docking positions based on '해성호' as reference
+        if i == 0:
+            # First ship is 해성호 and defines the base docking position near center
+            docking_lat = random.uniform(35.945, 35.965)
+            docking_lng = random.uniform(129.555, 129.575)
+            base_docking_lat = docking_lat
+            base_docking_lng = docking_lng
+        else:
+            # Diagonal offsets within ±0.01 around 해성호
+            diagonal_offsets = [
+                (-0.010, -0.010), (-0.008, -0.008), (-0.006, -0.006), (-0.004, -0.004), (-0.002, -0.002),
+                (0.002, 0.002), (0.004, 0.004), (0.006, 0.006), (0.008, 0.008)
+            ]
+            idx = (i - 1) % len(diagonal_offsets)
+            off_lat, off_lng = diagonal_offsets[idx]
+            docking_lat = (base_docking_lat or 35.955) + off_lat
+            docking_lng = (base_docking_lng or 129.565) + off_lng
+
+        # Fishing areas - slightly offshore (only for fishing vessels), near base
         if ship_type == "어선":
-            fishing_lat = random.uniform(35.930, 35.980)  # Within map bounds
-            fishing_lng = random.uniform(129.570, 129.620)  # Offshore area
+            base_fishing_lat = (base_docking_lat or 35.959) + 0.015
+            base_fishing_lng = (base_docking_lng or 129.590) + 0.020
+            fishing_lat = base_fishing_lat + random.uniform(-0.005, 0.005)
+            fishing_lng = base_fishing_lng + random.uniform(-0.005, 0.005)
         else:
             fishing_lat = None
             fishing_lng = None
 
-        # Docking positions - closer to shore, near port area
-        docking_lat = random.uniform(35.935, 35.970)  # Port area latitude range
-        docking_lng = random.uniform(129.550, 129.590)  # Near shore longitude
-
         ship = {
             "ship_id": ship_id,
-            "name": ship_names[i] if i < len(ship_names) else f"선박{i+1}호",
+            "name": "해성호" if i == 0 else (ship_names[i] if i < len(ship_names) else f"선박{i+1}호"),
             "type": ship_type,
             "pol": "포항",
             "pol_addr": "경북 포항시 북구 항구동" if i % 2 == 0 else "경북 포항시 남구 구룡포읍",
