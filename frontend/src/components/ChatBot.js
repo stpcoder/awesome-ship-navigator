@@ -37,6 +37,8 @@ const ChatBot = () => {
   const animationRef = useRef(null);
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
+  const maxDurationTimerRef = useRef(null);
+  const MAX_RECORDING_MS = 6000; // hard cap to avoid endless listening due to background noise
 
   // Fetch all ships on mount
   useEffect(() => {
@@ -178,6 +180,10 @@ const ChatBot = () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
+      if (maxDurationTimerRef.current) {
+        clearTimeout(maxDurationTimerRef.current);
+        maxDurationTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -309,6 +315,20 @@ const ChatBot = () => {
       };
 
       mediaRecorder.start();
+
+      // Hard stop after MAX_RECORDING_MS to avoid endless recording with background music
+      if (maxDurationTimerRef.current) {
+        clearTimeout(maxDurationTimerRef.current);
+        maxDurationTimerRef.current = null;
+      }
+      maxDurationTimerRef.current = setTimeout(() => {
+        try {
+          console.log(`Max recording duration reached (${MAX_RECORDING_MS}ms). Auto-stopping.`);
+          stopRecording();
+        } catch (e) {
+          console.warn('Failed to stop after max duration:', e);
+        }
+      }, MAX_RECORDING_MS);
     } catch (error) {
       console.error('음성 녹음 시작 실패:', error);
       alert('마이크 접근 권한이 필요합니다.');
@@ -342,6 +362,12 @@ const ChatBot = () => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
+    }
+
+    // Clear max duration timer
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
     }
 
     // Delay voice detection stop to ensure proper cleanup
