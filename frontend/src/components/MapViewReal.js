@@ -465,25 +465,30 @@ const MapViewReal = ({
               'interpolate',
               ['linear'],
               ['heatmap-density'],
-              0, 'rgba(0, 0, 255, 0)',       // Transparent at edges
-              0.1, 'rgba(0, 100, 255, 0.3)', // Blue (low density)
-              0.3, 'rgba(0, 200, 200, 0.4)', // Cyan
-              0.5, 'rgba(0, 255, 0, 0.5)',   // Green
-              0.65, 'rgba(150, 255, 0, 0.6)', // Yellow-green
-              0.8, 'rgba(255, 255, 0, 0.7)', // Yellow
-              0.9, 'rgba(255, 150, 0, 0.8)', // Orange
-              1, 'rgba(255, 0, 0, 0.9)'      // Red (high density)
+              0, 'rgba(0, 0, 0, 0)',       // Completely transparent at very low density
+              0.2, 'rgba(0, 0, 0, 0)',     // Still transparent (threshold)
+              0.3, 'rgba(0, 100, 255, 0.2)', // Blue (low density) - starts appearing
+              0.4, 'rgba(0, 200, 200, 0.3)', // Cyan
+              0.5, 'rgba(0, 255, 0, 0.4)',   // Green
+              0.65, 'rgba(150, 255, 0, 0.5)', // Yellow-green
+              0.8, 'rgba(255, 255, 0, 0.6)', // Yellow
+              0.9, 'rgba(255, 150, 0, 0.7)', // Orange
+              1, 'rgba(255, 0, 0, 0.8)'      // Red (high density)
             ],
-            // Adjust the heatmap radius by zoom level
+            // Adjust the heatmap radius by zoom level - INCREASED VALUES
             'heatmap-radius': [
               'interpolate',
               ['linear'],
               ['zoom'],
-              10, 20,  // Small radius at low zoom
-              12, 30,  // Medium radius
-              14, 40,  // Larger radius
-              16, 50,  // Even larger
-              18, 60   // Maximum radius at high zoom
+              10, 50,  // Much larger radius at low zoom
+              11, 60,
+              12, 70,  // Medium radius
+              13, 80,
+              14, 90,  // Larger radius
+              15, 100,
+              16, 110, // Even larger
+              17, 120,
+              18, 130  // Maximum radius at high zoom
             ],
             // Transition from heatmap to circle layer at high zoom
             'heatmap-opacity': [
