@@ -92,6 +92,9 @@ const MapViewReal = ({
   }, []);
 
   // Calculate ship clusters for density visualization
+  // Note: This function is no longer used since we switched to heatmap visualization
+  // Keeping for reference but commented out
+  /*
   const calculateShipClusters = useCallback((ships) => {
     const clusters = [];
     const processed = new Set();
@@ -173,6 +176,7 @@ const MapViewReal = ({
     console.log('Created', clusters.length, 'clusters');
     return clusters;
   }, [calculateDistance]);
+  */
 
   // Initialize map
   useEffect(() => {
@@ -357,7 +361,7 @@ const MapViewReal = ({
     };
   }, [onMapClick, onSetStart, onSetGoal, mapLoaded, latLngToPixel]);
 
-  // Update density clusters
+  // Update density heatmap
   useEffect(() => {
     console.log('Density heatmap effect triggered. showDensityHeatmap:', showDensityHeatmap, 'mapLoaded:', mapLoaded, 'ships count:', ships?.length);
 
@@ -367,11 +371,11 @@ const MapViewReal = ({
     }
 
     // Clean up existing layers
-    if (map.current.getLayer('cluster-circles')) {
-      map.current.removeLayer('cluster-circles');
+    if (map.current.getLayer('ship-density-heatmap')) {
+      map.current.removeLayer('ship-density-heatmap');
     }
-    if (map.current.getSource('ship-clusters')) {
-      map.current.removeSource('ship-clusters');
+    if (map.current.getSource('ship-density')) {
+      map.current.removeSource('ship-density');
     }
 
     if (!showDensityHeatmap) {
@@ -379,139 +383,131 @@ const MapViewReal = ({
       return;
     }
 
-    // Create density visualization using clusters
-    console.log('DENSITY ENABLED - Creating cluster visualization');
+    // Create density visualization using heatmap
+    console.log('DENSITY ENABLED - Creating heatmap visualization');
 
-    // Calculate clusters
-    const clusters = calculateShipClusters(ships);
-    console.log('Clusters created:', clusters);
+    // Create GeoJSON points for each ship
+    const shipFeatures = ships.map((ship, index) => {
+      // Support both data formats
+      const lat = ship.latitude || ship.lati;
+      const lng = ship.longitude || ship.longi;
 
-    // Create GeoJSON for cluster circles with gradient colors
-    const clusterFeatures = clusters.map(cluster => {
-      // Calculate color based on ship count (blue -> green -> yellow -> red)
-      let color;
-      let strokeWidth;
-      let opacity;
-      const shipCount = cluster.ships.length;
-
-      if (shipCount === 1) {
-        // Single ship - blue, small
-        color = 'rgba(0, 100, 255, 0.25)'; // Blue
-        strokeWidth = 1;
-        opacity = 0.6;
-      } else if (shipCount === 2) {
-        // 2 ships - cyan
-        color = 'rgba(0, 200, 200, 0.3)'; // Cyan
-        strokeWidth = 2;
-        opacity = 0.65;
-      } else if (shipCount === 3) {
-        // 3 ships - green
-        color = 'rgba(0, 255, 0, 0.35)'; // Green
-        strokeWidth = 2;
-        opacity = 0.7;
-      } else if (shipCount === 4) {
-        // 4 ships - yellow-green
-        color = 'rgba(150, 255, 0, 0.4)'; // Yellow-green
-        strokeWidth = 2.5;
-        opacity = 0.75;
-      } else if (shipCount === 5) {
-        // 5 ships - yellow
-        color = 'rgba(255, 255, 0, 0.45)'; // Yellow
-        strokeWidth = 3;
-        opacity = 0.8;
-      } else if (shipCount === 6) {
-        // 6 ships - orange
-        color = 'rgba(255, 150, 0, 0.5)'; // Orange
-        strokeWidth = 3;
-        opacity = 0.85;
-      } else {
-        // 7+ ships - red
-        color = 'rgba(255, 0, 0, 0.55)'; // Red
-        strokeWidth = 4;
-        opacity = 0.9;
+      if (!lat || !lng) {
+        console.warn('Ship missing coordinates:', ship);
+        return null;
       }
-
-      console.log(`Cluster at [${cluster.center.lng}, ${cluster.center.lat}] with ${shipCount} ships, radius: ${cluster.radius}m, color: ${color}`);
 
       return {
         type: 'Feature',
         geometry: {
           type: 'Point',
-          coordinates: [cluster.center.lng, cluster.center.lat]
+          coordinates: [parseFloat(lng), parseFloat(lat)]
         },
         properties: {
-          radius: cluster.radius,
-          shipCount: shipCount,
-          color: color,
-          borderColor: color.replace(/0\.\d+\)/, `${Math.min(opacity + 0.2, 1)})`), // Darker border
-          strokeWidth: strokeWidth,
-          opacity: opacity
+          id: ship.id || index,
+          weight: 1 // Each ship has equal weight
         }
       };
-    });
+    }).filter(Boolean); // Remove null values
 
-    // Use cluster features instead of individual ship circles
     const geoJsonData = {
       type: 'FeatureCollection',
-      features: clusterFeatures
+      features: shipFeatures
     };
 
     console.log('GeoJSON data:', geoJsonData);
     console.log('Features count:', geoJsonData.features.length);
 
     // Add or update source
-    if (map.current.getSource('ship-clusters')) {
-      console.log('Updating existing ship-clusters source');
-      map.current.getSource('ship-clusters').setData(geoJsonData);
+    if (map.current.getSource('ship-density')) {
+      console.log('Updating existing ship-density source');
+      map.current.getSource('ship-density').setData(geoJsonData);
     } else {
-      console.log('Adding new ship-clusters source');
-      map.current.addSource('ship-clusters', {
+      console.log('Adding new ship-density source');
+      map.current.addSource('ship-density', {
         type: 'geojson',
         data: geoJsonData
       });
     }
 
-    // Add cluster circles layer if it doesn't exist
-    if (!map.current.getLayer('cluster-circles')) {
-      console.log('Adding cluster-circles layer');
+    // Add heatmap layer if it doesn't exist
+    if (!map.current.getLayer('ship-density-heatmap')) {
+      console.log('Adding ship-density-heatmap layer');
 
-      // Try to add layer with proper ordering
       try {
         map.current.addLayer({
-          id: 'cluster-circles',
-          type: 'circle',
-          source: 'ship-clusters',
+          id: 'ship-density-heatmap',
+          type: 'heatmap',
+          source: 'ship-density',
+          maxzoom: 20,
           paint: {
-            'circle-radius': [
+            // Increase the heatmap weight based on zoom level
+            // heatmap weight is interpolated linearly between zoom levels
+            'heatmap-weight': [
+              'interpolate',
+              ['linear'],
+              ['get', 'weight'],
+              0, 0,
+              1, 1
+            ],
+            // Increase the heatmap color weight by zoom level
+            // heatmap-intensity is a multiplier on top of heatmap-weight
+            'heatmap-intensity': [
               'interpolate',
               ['linear'],
               ['zoom'],
-              10, ['/', ['get', 'radius'], 20],  // Scale based on actual radius
-              12, ['/', ['get', 'radius'], 12],
-              14, ['/', ['get', 'radius'], 6],
-              16, ['/', ['get', 'radius'], 3],
-              18, ['/', ['get', 'radius'], 1.5]
+              0, 1,
+              20, 3
             ],
-            'circle-color': ['get', 'color'],
-            'circle-stroke-color': ['get', 'borderColor'],
-            'circle-stroke-width': ['get', 'strokeWidth'],
-            'circle-blur': 0.4,
-            'circle-opacity': ['get', 'opacity']
+            // Color ramp for heatmap. Domain is 0 (low) to 1 (high).
+            // Blue -> Cyan -> Green -> Yellow -> Orange -> Red
+            'heatmap-color': [
+              'interpolate',
+              ['linear'],
+              ['heatmap-density'],
+              0, 'rgba(0, 0, 255, 0)',       // Transparent at edges
+              0.1, 'rgba(0, 100, 255, 0.3)', // Blue (low density)
+              0.3, 'rgba(0, 200, 200, 0.4)', // Cyan
+              0.5, 'rgba(0, 255, 0, 0.5)',   // Green
+              0.65, 'rgba(150, 255, 0, 0.6)', // Yellow-green
+              0.8, 'rgba(255, 255, 0, 0.7)', // Yellow
+              0.9, 'rgba(255, 150, 0, 0.8)', // Orange
+              1, 'rgba(255, 0, 0, 0.9)'      // Red (high density)
+            ],
+            // Adjust the heatmap radius by zoom level
+            'heatmap-radius': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              10, 20,  // Small radius at low zoom
+              12, 30,  // Medium radius
+              14, 40,  // Larger radius
+              16, 50,  // Even larger
+              18, 60   // Maximum radius at high zoom
+            ],
+            // Transition from heatmap to circle layer at high zoom
+            'heatmap-opacity': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              7, 0.8,
+              20, 0.8
+            ]
           }
         });
 
-        console.log('Successfully added cluster-circles layer');
+        console.log('Successfully added ship-density-heatmap layer');
 
         // Log the current style layers to debug ordering
         const layers = map.current.getStyle().layers;
         console.log('Current map layers:', layers.map(l => l.id));
       } catch (error) {
-        console.error('Error adding cluster-circles layer:', error);
+        console.error('Error adding ship-density-heatmap layer:', error);
       }
     } else {
-      console.log('cluster-circles layer already exists');
+      console.log('ship-density-heatmap layer already exists');
     }
-  }, [ships, showDensityHeatmap, mapLoaded, calculateShipClusters]);
+  }, [ships, showDensityHeatmap, mapLoaded]);
 
   // Update ship markers
   useEffect(() => {
