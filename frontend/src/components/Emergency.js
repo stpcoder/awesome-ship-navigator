@@ -12,14 +12,7 @@ const Emergency = ({ sosAlerts, onSOSUpdate }) => {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {sosAlerts.map(alert => (
-            <div key={alert.id} style={{
-              padding: '0.8rem',
-              background: 'rgba(255, 100, 100, 0.1)',
-              borderRadius: '10px',
-              borderLeft: '3px solid #ff6b6b',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)'
-            }}>
+            <div key={alert.id} className="emergency-alert">
               <div style={{ fontWeight: '600', color: '#ff6b6b', marginBottom: '0.5rem' }}>
                 {alert.ship_name || alert.ship_id}
               </div>
@@ -46,49 +39,15 @@ const Emergency = ({ sosAlerts, onSOSUpdate }) => {
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                   <button
                     onClick={() => onSOSUpdate(alert.id, 'responding')}
-                    style={{
-                      flex: 1,
-                      padding: '0.4rem',
-                      background: 'rgba(255, 255, 255, 0.1)',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '0.8rem',
-                      cursor: 'pointer',
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      transition: 'all 0.3s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-                    }}
+                    className="modern-button"
+                    style={{ flex: 1, fontSize: '0.8rem' }}
                   >
                     대응 시작
                   </button>
                   <button
                     onClick={() => onSOSUpdate(alert.id, 'resolved')}
-                    style={{
-                      flex: 1,
-                      padding: '0.4rem',
-                      background: 'rgba(76, 175, 80, 0.2)',
-                      color: '#4CAF50',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '0.8rem',
-                      cursor: 'pointer',
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      transition: 'all 0.3s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = 'rgba(76, 175, 80, 0.3)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = 'rgba(76, 175, 80, 0.2)';
-                    }}
+                    className="modern-button button-success"
+                    style={{ flex: 1, fontSize: '0.8rem' }}
                   >
                     해결됨
                   </button>
@@ -96,15 +55,7 @@ const Emergency = ({ sosAlerts, onSOSUpdate }) => {
               )}
 
               {alert.status === 'responding' && (
-                <div style={{
-                  padding: '0.3rem 0.6rem',
-                  background: 'rgba(255, 193, 7, 0.2)',
-                  color: '#FFC107',
-                  borderRadius: '6px',
-                  fontSize: '0.85rem',
-                  textAlign: 'center',
-                  marginTop: '0.5rem'
-                }}>
+                <div className="status-badge status-responding" style={{ marginTop: '0.5rem' }}>
                   대응 중
                 </div>
               )}

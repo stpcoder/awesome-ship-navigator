@@ -111,60 +111,18 @@ const SensorInfo = ({ sensorData, onSensorSelect }) => {
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
           <button
             onClick={handleShowAllCCTV}
-            style={{
-              flex: 1,
-              padding: '0.8rem',
-              backgroundColor: activeMode === 'cctv' ? '#6B8DD6' : '#A8C3F7',
-              color: 'white',
-              border: 'none',
-              borderRadius: '10px',
-              cursor: 'pointer',
-              fontSize: '0.9rem',
-              fontWeight: '500',
-              transition: 'all 0.3s ease',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-            }}
-            onMouseEnter={(e) => {
-              if (activeMode !== 'cctv') {
-                e.target.style.backgroundColor = '#8FA5DC';
-              }
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.backgroundColor = activeMode === 'cctv' ? '#6B8DD6' : '#A8C3F7';
-            }}
+            className={`modern-button ${activeMode === 'cctv' ? 'button-primary' : ''}`}
+            style={{ flex: 1 }}
           >
-            CCTV ({sensorData.cctv?.length || 0})
+            CCTV
           </button>
 
           <button
             onClick={handleShowAllLiDAR}
-            style={{
-              flex: 1,
-              padding: '0.8rem',
-              backgroundColor: activeMode === 'lidar' ? '#B589D6' : '#D4B5F0',
-              color: 'white',
-              border: 'none',
-              borderRadius: '10px',
-              cursor: 'pointer',
-              fontSize: '0.9rem',
-              fontWeight: '500',
-              transition: 'all 0.3s ease',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-            }}
-            onMouseEnter={(e) => {
-              if (activeMode !== 'lidar') {
-                e.target.style.backgroundColor = '#C8A5E3';
-              }
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.backgroundColor = activeMode === 'lidar' ? '#B589D6' : '#D4B5F0';
-            }}
+            className={`modern-button ${activeMode === 'lidar' ? 'button-primary' : ''}`}
+            style={{ flex: 1 }}
           >
-            LiDAR ({sensorData.lidar?.length || 0})
+            LiDAR
           </button>
         </div>
 
@@ -184,19 +142,7 @@ const SensorInfo = ({ sensorData, onSensorSelect }) => {
             <select
               value={selectedCCTV}
               onChange={handleCCTVSelect}
-              style={{
-                width: '100%',
-                padding: '0.6rem',
-                background: 'rgba(255, 255, 255, 0.1)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '10px',
-                fontSize: '0.9rem',
-                color: 'var(--text-primary)',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease'
-              }}
+              className="modern-select"
             >
               <option value="">전체 CCTV 보기</option>
               {sensorData.cctv?.map(cctv => (
@@ -223,19 +169,7 @@ const SensorInfo = ({ sensorData, onSensorSelect }) => {
             <select
               value={selectedLiDAR}
               onChange={handleLiDARSelect}
-              style={{
-                width: '100%',
-                padding: '0.6rem',
-                background: 'rgba(255, 255, 255, 0.1)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '10px',
-                fontSize: '0.9rem',
-                color: 'var(--text-primary)',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease'
-              }}
+              className="modern-select"
             >
               <option value="">전체 LiDAR 보기</option>
               {sensorData.lidar?.map(lidar => (
@@ -249,14 +183,7 @@ const SensorInfo = ({ sensorData, onSensorSelect }) => {
 
         {/* Selected sensor info */}
         {selectedCCTV && sensorData.cctv && (
-          <div style={{
-            padding: '0.8rem',
-            background: 'rgba(65, 105, 225, 0.1)',
-            borderRadius: '10px',
-            fontSize: '0.85rem',
-            color: 'var(--text-secondary)',
-            borderLeft: '3px solid #4169E1'
-          }}>
+          <div className="info-item" style={{ borderLeft: '3px solid #4169E1' }}>
             <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: '#4169E1' }}>
               선택된 CCTV
             </div>
@@ -265,14 +192,7 @@ const SensorInfo = ({ sensorData, onSensorSelect }) => {
         )}
 
         {selectedLiDAR && sensorData.lidar && (
-          <div style={{
-            padding: '0.8rem',
-            background: 'rgba(155, 89, 182, 0.1)',
-            borderRadius: '10px',
-            fontSize: '0.85rem',
-            color: 'var(--text-secondary)',
-            borderLeft: '3px solid #9b59b6'
-          }}>
+          <div className="info-item" style={{ borderLeft: '3px solid #9b59b6' }}>
             <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: '#9b59b6' }}>
               선택된 LiDAR
             </div>

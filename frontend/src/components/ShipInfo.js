@@ -88,28 +88,15 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
   };
 
   return (
-    <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <h3 style={{ marginBottom: '0.5rem' }}>선박 정보</h3>
 
       {/* Ship Dropdown Selector */}
-      <div style={{ marginBottom: '0.5rem' }}>
+      <div style={{ marginBottom: '12px' }}>
         <select
           value={shipDropdownValue}
           onChange={handleShipSelect}
-          style={{
-            width: '100%',
-            padding: '0.6rem',
-            background: 'rgba(255, 255, 255, 0.9)',
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)',
-            border: '1px solid rgba(102, 126, 234, 0.3)',
-            borderRadius: '10px',
-            fontSize: '0.95rem',
-            color: '#333',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            outline: 'none'
-          }}
+          className="modern-select"
         >
           <option value="">선박 선택...</option>
           {ships.map(ship => (
@@ -129,20 +116,22 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
           WebkitBackdropFilter: 'blur(10px)',
           borderRadius: '10px',
           border: '1px solid rgba(255, 255, 255, 0.1)',
-          maxHeight: editMode ? 'calc(100vh - 400px)' : 'auto',
-          overflowY: editMode ? 'auto' : 'visible',
+          flex: 1,
+          overflowY: 'auto',
           color: 'var(--text-primary)'
         }}>
           {/* Removed header section with 상세 정보 text and 위치 편집 button */}
 
           {!editMode && (
             <div style={{ fontSize: '0.9rem' }}>
-              <p style={{ margin: '0.3rem 0', fontWeight: '600', color: '#667eea' }}>
-                {selectedShip.name} ({selectedShip.shipId})
-              </p>
-              {(selectedShip.length || selectedShip.breath || selectedShip.depth || selectedShip.gt) && (
-                <p style={{ margin: '0.3rem 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  ({selectedShip.length?.toFixed(1) || selectedShip.length || '0'} x {selectedShip.breath?.toFixed(1) || selectedShip.breath || '0'} x {selectedShip.depth?.toFixed(1) || selectedShip.depth || '0'}, {selectedShip.gt?.toFixed(0) || selectedShip.gt || '0'} t)
+              {(selectedShip.length || selectedShip.breath || selectedShip.depth) && (
+                <p style={{ margin: '0.3rem 0', color: 'var(--text-primary)' }}>
+                  <strong>크기:</strong> {selectedShip.length?.toFixed(1) || selectedShip.length || '0'} x {selectedShip.breath?.toFixed(1) || selectedShip.breath || '0'} x {selectedShip.depth?.toFixed(1) || selectedShip.depth || '0'}m
+                </p>
+              )}
+              {selectedShip.gt && (
+                <p style={{ margin: '0.3rem 0', color: 'var(--text-primary)' }}>
+                  <strong>무게:</strong> {selectedShip.gt?.toFixed(0) || selectedShip.gt || '0'}t
                 </p>
               )}
               {selectedShip.pol && <p style={{ margin: '0.3rem 0' }}><strong>모항:</strong> {selectedShip.pol}</p>}
@@ -151,8 +140,6 @@ const ShipInfo = ({ ships, selectedShip, onSelectShip, onUpdatePositions, onMapC
 
           {editMode && (
             <div style={{ fontSize: '0.9rem' }}>
-              <p style={{ margin: '0.2rem 0' }}><strong>{selectedShip.name}</strong> ({selectedShip.type})</p>
-
               <hr style={{ margin: '0.5rem 0', borderTop: '1px solid #dee2e6' }} />
             </div>
           )}

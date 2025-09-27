@@ -2480,7 +2480,9 @@ async def get_ship_schedules():
         path = json.loads(path_json)
 
         # Determine trip type based on direction
-        trip_type = 'departure' if direction == 'departure' else 'arrival'
+        # to_fishing = departure (dock -> fishing area)
+        # to_docking = arrival (fishing area -> dock)
+        trip_type = 'departure' if direction == 'to_fishing' else 'arrival'
 
         # Extract times
         dep_time = datetime.fromisoformat(departure_time).strftime("%H:%M")

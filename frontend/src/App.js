@@ -50,6 +50,7 @@ function MainDashboard() {
   const [simulationTime, setSimulationTime] = useState(null); // Current simulation time
   const [selectedShipRoute, setSelectedShipRoute] = useState(null); // Selected ship's route from simulation
   const [expandedPanel, setExpandedPanel] = useState(null); // Track which accordion panel is expanded
+  const [singlePanelMode, setSinglePanelMode] = useState(false); // Track if showing single panel
 
   // Always show realtime ships regardless of mode
   useEffect(() => {
@@ -442,14 +443,22 @@ function MainDashboard() {
           {/* Accordion Panel 1: Ship Info */}
           <div className="accordion-item">
             <div
-              className={`accordion-header ${expandedPanel === 'shipInfo' ? 'active' : ''}`}
-              onClick={() => setExpandedPanel(expandedPanel === 'shipInfo' ? null : 'shipInfo')}
+              className={`accordion-header ${expandedPanel === 'shipInfo' ? 'active' : ''} ${singlePanelMode && expandedPanel !== 'shipInfo' ? 'hidden' : ''}`}
+              onClick={() => {
+                if (expandedPanel === 'shipInfo') {
+                  setExpandedPanel(null);
+                  setSinglePanelMode(false);
+                } else {
+                  setExpandedPanel('shipInfo');
+                  setSinglePanelMode(true);
+                }
+              }}
             >
               <span className="accordion-title">선박 정보</span>
               <span className="accordion-arrow">{expandedPanel === 'shipInfo' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'shipInfo' && (
-              <div className="accordion-content">
+              <div className={`accordion-content ${singlePanelMode ? 'full-height' : ''}`}>
                 <ShipInfo
                   ships={ships}
                   selectedShip={selectedShip}
@@ -471,14 +480,22 @@ function MainDashboard() {
           {/* Accordion Panel 2: Sensor Info */}
           <div className="accordion-item">
             <div
-              className={`accordion-header ${expandedPanel === 'sensorInfo' ? 'active' : ''}`}
-              onClick={() => setExpandedPanel(expandedPanel === 'sensorInfo' ? null : 'sensorInfo')}
+              className={`accordion-header ${expandedPanel === 'sensorInfo' ? 'active' : ''} ${singlePanelMode && expandedPanel !== 'sensorInfo' ? 'hidden' : ''}`}
+              onClick={() => {
+                if (expandedPanel === 'sensorInfo') {
+                  setExpandedPanel(null);
+                  setSinglePanelMode(false);
+                } else {
+                  setExpandedPanel('sensorInfo');
+                  setSinglePanelMode(true);
+                }
+              }}
             >
               <span className="accordion-title">센서 정보</span>
               <span className="accordion-arrow">{expandedPanel === 'sensorInfo' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'sensorInfo' && (
-              <div className="accordion-content">
+              <div className={`accordion-content ${singlePanelMode ? 'full-height' : ''}`}>
                 <SensorInfo
                   sensorData={sensorData}
                   onSensorSelect={handleSensorSelect}
@@ -490,14 +507,22 @@ function MainDashboard() {
           {/* Accordion Panel 3: Route Planner */}
           <div className="accordion-item">
             <div
-              className={`accordion-header ${expandedPanel === 'routePlanner' ? 'active' : ''}`}
-              onClick={() => setExpandedPanel(expandedPanel === 'routePlanner' ? null : 'routePlanner')}
+              className={`accordion-header ${expandedPanel === 'routePlanner' ? 'active' : ''} ${singlePanelMode && expandedPanel !== 'routePlanner' ? 'hidden' : ''}`}
+              onClick={() => {
+                if (expandedPanel === 'routePlanner') {
+                  setExpandedPanel(null);
+                  setSinglePanelMode(false);
+                } else {
+                  setExpandedPanel('routePlanner');
+                  setSinglePanelMode(true);
+                }
+              }}
             >
               <span className="accordion-title">출항 스케줄</span>
               <span className="accordion-arrow">{expandedPanel === 'routePlanner' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'routePlanner' && (
-              <div className="accordion-content">
+              <div className={`accordion-content ${singlePanelMode ? 'full-height' : ''}`}>
                 <RoutePlanner
                   ships={ships}
                   selectedShip={selectedShip}
@@ -520,14 +545,22 @@ function MainDashboard() {
           {/* Accordion Panel 4: Simulation Control */}
           <div className="accordion-item">
             <div
-              className={`accordion-header ${expandedPanel === 'simulation' ? 'active' : ''}`}
-              onClick={() => setExpandedPanel(expandedPanel === 'simulation' ? null : 'simulation')}
+              className={`accordion-header ${expandedPanel === 'simulation' ? 'active' : ''} ${singlePanelMode && expandedPanel !== 'simulation' ? 'hidden' : ''}`}
+              onClick={() => {
+                if (expandedPanel === 'simulation') {
+                  setExpandedPanel(null);
+                  setSinglePanelMode(false);
+                } else {
+                  setExpandedPanel('simulation');
+                  setSinglePanelMode(true);
+                }
+              }}
             >
               <span className="accordion-title">시뮬레이션 제어</span>
               <span className="accordion-arrow">{expandedPanel === 'simulation' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'simulation' && (
-              <div className="accordion-content">
+              <div className={`accordion-content ${singlePanelMode ? 'full-height' : ''}`}>
                 <SimulationControl
                   onSimulationStatusChange={handleSimulationStatusChange}
                 />
@@ -538,14 +571,22 @@ function MainDashboard() {
           {/* Accordion Panel 5: Emergency */}
           <div className="accordion-item">
             <div
-              className={`accordion-header ${expandedPanel === 'emergency' ? 'active' : ''}`}
-              onClick={() => setExpandedPanel(expandedPanel === 'emergency' ? null : 'emergency')}
+              className={`accordion-header ${expandedPanel === 'emergency' ? 'active' : ''} ${singlePanelMode && expandedPanel !== 'emergency' ? 'hidden' : ''}`}
+              onClick={() => {
+                if (expandedPanel === 'emergency') {
+                  setExpandedPanel(null);
+                  setSinglePanelMode(false);
+                } else {
+                  setExpandedPanel('emergency');
+                  setSinglePanelMode(true);
+                }
+              }}
             >
               <span className="accordion-title">긴급 상황</span>
               <span className="accordion-arrow">{expandedPanel === 'emergency' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'emergency' && (
-              <div className="accordion-content">
+              <div className={`accordion-content ${singlePanelMode ? 'full-height' : ''}`}>
                 <Emergency
                   sosAlerts={sosAlerts}
                   onSOSUpdate={handleSOSUpdate}
@@ -557,8 +598,16 @@ function MainDashboard() {
           {/* Accordion Panel 6: Messages */}
           <div className="accordion-item">
             <div
-              className={`accordion-header ${expandedPanel === 'messages' ? 'active' : ''}`}
-              onClick={() => setExpandedPanel(expandedPanel === 'messages' ? null : 'messages')}
+              className={`accordion-header ${expandedPanel === 'messages' ? 'active' : ''} ${singlePanelMode && expandedPanel !== 'messages' ? 'hidden' : ''}`}
+              onClick={() => {
+                if (expandedPanel === 'messages') {
+                  setExpandedPanel(null);
+                  setSinglePanelMode(false);
+                } else {
+                  setExpandedPanel('messages');
+                  setSinglePanelMode(true);
+                }
+              }}
             >
               <span className="accordion-title">메시지</span>
               {unreadCount > 0 && (
@@ -567,7 +616,7 @@ function MainDashboard() {
               <span className="accordion-arrow">{expandedPanel === 'messages' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'messages' && (
-              <div className="accordion-content">
+              <div className={`accordion-content ${singlePanelMode ? 'full-height' : ''}`}>
                 <Messages
                   messages={messages}
                   unreadCount={unreadCount}

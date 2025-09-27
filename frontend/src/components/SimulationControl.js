@@ -168,49 +168,21 @@ const SimulationControl = ({ onSimulationStatusChange }) => {
             onClick={handlePlayPause}
             disabled={isLoading}
             title={isPlaying ? '일시정지' : '재생'}
+            className={`modern-button ${isPlaying ? 'button-danger' : 'button-success'}`}
             style={{
-              padding: '0.6rem 1.2rem',
-              background: isPlaying
-                ? '#dc3545'
-                : '#4CAF50',
-              color: 'white',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              borderRadius: '12px',
-              fontSize: '0.9rem',
-              fontWeight: '500',
-              cursor: isLoading ? 'not-allowed' : 'pointer',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              transition: 'all 0.3s ease',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
               opacity: isLoading ? 0.6 : 1
             }}
           >
             {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            <span>{isPlaying ? '일시정지' : '재생'}</span>
+            <span>{isPlaying ? '정지' : '재생'}</span>
           </button>
 
           <button
             onClick={handleReset}
             disabled={isLoading}
             title="초기화"
+            className="modern-button button-primary"
             style={{
-              padding: '0.6rem 1.2rem',
-              background: '#667eea',
-              color: 'white',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              borderRadius: '12px',
-              fontSize: '0.9rem',
-              fontWeight: '500',
-              cursor: isLoading ? 'not-allowed' : 'pointer',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              transition: 'all 0.3s ease',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
               opacity: isLoading ? 0.6 : 1
             }}
           >
@@ -220,58 +192,26 @@ const SimulationControl = ({ onSimulationStatusChange }) => {
         </div>
 
         {/* Speed Control */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '1rem',
-          padding: '0.5rem',
-          background: 'rgba(255, 255, 255, 0.1)',
-          borderRadius: '10px',
-          backdropFilter: 'blur(10px)',
-          WebkitBackdropFilter: 'blur(10px)'
-        }}>
-          <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-primary)' }}>속도:</span>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            {[5, 10, 20].map(speed => (
-              <button
-                key={speed}
-                onClick={() => handleSpeedChange(speed)}
-                disabled={isLoading}
-                style={{
-                  padding: '0.4rem 0.8rem',
-                  background: speedMultiplier === speed
-                    ? 'linear-gradient(135deg, rgba(102, 126, 234, 0.7), rgba(118, 75, 162, 0.7))'
-                    : 'rgba(255, 255, 255, 0.1)',
-                  color: speedMultiplier === speed ? 'white' : 'var(--text-primary)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  borderRadius: '8px',
-                  fontSize: '0.85rem',
-                  fontWeight: '500',
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.3s ease',
-                  opacity: isLoading ? 0.6 : 1
-                }}
-              >
-                {speed}x
-              </button>
-            ))}
-          </div>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+          {[5, 10, 20].map(speed => (
+            <button
+              key={speed}
+              onClick={() => handleSpeedChange(speed)}
+              disabled={isLoading}
+              className={`speed-button ${speedMultiplier === speed ? 'active' : ''}`}
+              style={{
+                flex: 1,
+                opacity: isLoading ? 0.6 : 1
+              }}
+            >
+              {speed}x
+            </button>
+          ))}
         </div>
 
         {/* Current Simulation Time Display */}
         {simulationTime && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.5rem',
-            padding: '0.8rem',
-            background: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '10px',
-            backdropFilter: 'blur(10px)',
-            WebkitBackdropFilter: 'blur(10px)'
-          }}>
+          <div className="info-item">
             <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-primary)' }}>시뮬레이션 시각:</span>
             <span style={{
               fontSize: '1rem',
