@@ -412,7 +412,10 @@ function MainDashboard() {
         <div style={{ display: 'flex', gap: '12px' }}>
           <button
             className={`floating-header-button ${showDensityHeatmap ? 'active' : ''}`}
-            onClick={() => setShowDensityHeatmap(!showDensityHeatmap)}
+            onClick={() => {
+              console.log('Density button clicked. Current state:', showDensityHeatmap, '-> New state:', !showDensityHeatmap);
+              setShowDensityHeatmap(!showDensityHeatmap);
+            }}
             style={{
               backgroundColor: showDensityHeatmap ? '#FF6B00' : '',
               color: showDensityHeatmap ? 'white' : ''

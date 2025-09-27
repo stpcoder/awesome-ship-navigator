@@ -365,20 +365,21 @@ const MapViewReal = ({
       return;
     }
 
+    // Clean up existing layers
+    if (map.current.getLayer('cluster-circles')) {
+      map.current.removeLayer('cluster-circles');
+    }
+    if (map.current.getSource('ship-clusters')) {
+      map.current.removeSource('ship-clusters');
+    }
+
     if (!showDensityHeatmap) {
-      // Remove clusters if not showing
-      console.log('Removing density clusters');
-      if (map.current.getLayer('cluster-circles')) {
-        map.current.removeLayer('cluster-circles');
-      }
-      if (map.current.getSource('ship-clusters')) {
-        map.current.removeSource('ship-clusters');
-      }
+      console.log('Density heatmap disabled, cleaned up layers');
       return;
     }
 
     // Create simple density circles for all ships
-    console.log('Creating density visualization for ships:', ships);
+    console.log('DENSITY ENABLED - Creating visualization for ships:', ships);
 
     // Alternative approach: Create a circle for each ship
     const shipCircles = ships.map((ship, index) => {
@@ -387,6 +388,8 @@ const MapViewReal = ({
 
       if (!lat || !lng) return null;
 
+      console.log(`Ship ${index}: lat=${lat}, lng=${lng}`);
+
       return {
         type: 'Feature',
         geometry: {
@@ -394,11 +397,11 @@ const MapViewReal = ({
           coordinates: [lng, lat]
         },
         properties: {
-          radius: 500, // Fixed radius for visualization
+          radius: 1000, // Increased radius for better visibility
           shipCount: 1,
-          color: 'rgba(255, 128, 0, 0.3)',
-          borderColor: 'rgba(255, 128, 0, 0.6)',
-          strokeWidth: 2
+          color: 'rgba(255, 0, 0, 0.4)', // Red with more opacity
+          borderColor: 'rgba(255, 0, 0, 0.8)', // Darker red border
+          strokeWidth: 3
         }
       };
     }).filter(f => f !== null);
@@ -477,26 +480,38 @@ const MapViewReal = ({
     // Add cluster circles layer if it doesn't exist
     if (!map.current.getLayer('cluster-circles')) {
       console.log('Adding cluster-circles layer');
-      map.current.addLayer({
-        id: 'cluster-circles',
-        type: 'circle',
-        source: 'ship-clusters',
-        paint: {
-          'circle-radius': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            10, ['/', ['get', 'radius'], 10],
-            14, ['/', ['get', 'radius'], 5],
-            18, ['/', ['get', 'radius'], 2]
-          ],
-          'circle-color': ['get', 'color'],
-          'circle-stroke-color': ['get', 'borderColor'],
-          'circle-stroke-width': ['get', 'strokeWidth'],
-          'circle-blur': 0.5,
-          'circle-opacity': 0.8
-        }
-      }, 'ship-route-planned'); // Add before ship route layer to ensure visibility
+
+      // Try to add layer with proper ordering
+      try {
+        map.current.addLayer({
+          id: 'cluster-circles',
+          type: 'circle',
+          source: 'ship-clusters',
+          paint: {
+            'circle-radius': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              10, 30,  // Simplified: fixed pixel size that scales with zoom
+              14, 50,
+              18, 100
+            ],
+            'circle-color': ['get', 'color'],
+            'circle-stroke-color': ['get', 'borderColor'],
+            'circle-stroke-width': ['get', 'strokeWidth'],
+            'circle-blur': 0.3,
+            'circle-opacity': 0.7
+          }
+        });
+
+        console.log('Successfully added cluster-circles layer');
+
+        // Log the current style layers to debug ordering
+        const layers = map.current.getStyle().layers;
+        console.log('Current map layers:', layers.map(l => l.id));
+      } catch (error) {
+        console.error('Error adding cluster-circles layer:', error);
+      }
     } else {
       console.log('cluster-circles layer already exists');
     }
