@@ -2572,6 +2572,107 @@ async def generate_simulation_routes():
         return {"status": "error", "message": result.stderr}
 
 
+@app.get("/api/daily-report")
+async def get_daily_report(
+    date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Generate daily operational report"""
+    from datetime import datetime, timedelta
+    from sqlalchemy import and_, func
+
+    # Parse date or use today
+    if date:
+        report_date = datetime.strptime(date, "%Y-%m-%d").date()
+    else:
+        report_date = datetime.now().date()
+
+    start_datetime = datetime.combine(report_date, datetime.min.time())
+    end_datetime = datetime.combine(report_date, datetime.max.time())
+
+    # Get ship statistics
+    total_ships = db.query(DBShip).count()
+    active_ships = db.query(DBShip).filter(DBShip.status.in_(['active', 'sailing'])).count()
+    docked_ships = db.query(DBShip).filter(DBShip.status == 'docked').count()
+
+    # Get SOS alerts for the day
+    sos_alerts = db.query(DBSOSAlert).filter(
+        and_(
+            DBSOSAlert.created_at >= start_datetime,
+            DBSOSAlert.created_at <= end_datetime
+        )
+    ).all()
+
+    total_sos = len(sos_alerts)
+    active_sos = len([s for s in sos_alerts if s.status == 'active'])
+    resolved_sos = len([s for s in sos_alerts if s.status == 'resolved'])
+
+    # Get messages for the day
+    messages = db.query(DBMessage).filter(
+        and_(
+            DBMessage.created_at >= start_datetime,
+            DBMessage.created_at <= end_datetime
+        )
+    ).all()
+
+    total_messages = len(messages)
+    sent_messages = len([m for m in messages if m.sender_id == 'control_center'])
+    received_messages = len([m for m in messages if m.recipient_id == 'control_center'])
+
+    # Get scheduled departures from simulation routes
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, arrival_time, direction
+        FROM ship_routes_simulation
+        ORDER BY departure_time
+    """)
+    departures = []
+    for row in cursor.fetchall():
+        departures.append({
+            "ship_id": row[0],
+            "ship_name": row[1],
+            "departure_time": row[2],
+            "arrival_time": row[3],
+            "direction": row[4]
+        })
+    conn.close()
+
+    # Get any incidents (SOS alerts with descriptions)
+    incidents = []
+    for alert in sos_alerts:
+        incidents.append({
+            "time": alert.created_at.strftime("%H:%M"),
+            "ship_name": alert.ship_name,
+            "description": alert.description or "SOS Alert",
+            "status": alert.status
+        })
+
+    report = {
+        "date": report_date.isoformat(),
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "ship_status": {
+            "total_ships": total_ships,
+            "active_ships": active_ships,
+            "docked_ships": docked_ships
+        },
+        "emergency_summary": {
+            "total_sos_alerts": total_sos,
+            "active_alerts": active_sos,
+            "resolved_alerts": resolved_sos
+        },
+        "communication_summary": {
+            "total_messages": total_messages,
+            "sent_messages": sent_messages,
+            "received_messages": received_messages
+        },
+        "departures": departures[:10],  # Limit to 10 for display
+        "incidents": incidents
+    }
+
+    return report
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

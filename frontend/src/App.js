@@ -13,6 +13,7 @@ import CCTVVideo from './components/CCTVVideo';
 import LiDARStats from './components/LiDARStats';
 import Emergency from './components/Emergency';
 import Messages from './components/Messages';
+import ReportGenerator from './components/ReportGenerator';
 import obstaclesData from './data/obstacles_latlng.json';
 import axios from 'axios';
 
@@ -46,6 +47,7 @@ function MainDashboard() {
   const [showCCTVMarkers, setShowCCTVMarkers] = useState(false); // Show CCTV markers on map
   const [showLiDARMarkers, setShowLiDARMarkers] = useState(false); // Show LiDAR markers on map
   const [showDensityHeatmap, setShowDensityHeatmap] = useState(false); // Show ship density heatmap
+  const [showObstacles, setShowObstacles] = useState(false); // Show obstacles on map
   const [showEntryExitStats, setShowEntryExitStats] = useState(false); // Show entry/exit statistics window
   const [isSimulationRunning, setIsSimulationRunning] = useState(false); // Simulation running state
   const [simulationTime, setSimulationTime] = useState(null); // Current simulation time
@@ -426,23 +428,18 @@ function MainDashboard() {
           </button>
 
           <button
-            className="floating-header-button"
-            onClick={() => setIsLiveMode(!isLiveMode)}
+            className={`floating-header-button ${showObstacles ? 'active' : ''}`}
+            onClick={() => {
+              console.log('Obstacles button clicked. Current state:', showObstacles, '-> New state:', !showObstacles);
+              setShowObstacles(!showObstacles);
+            }}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
+              backgroundColor: showObstacles ? 'rgba(102, 126, 234, 0.9)' : '',  // Using purple like sidebar buttons
+              color: showObstacles ? 'white' : '',
+              boxShadow: showObstacles ? '0 0 10px rgba(102, 126, 234, 0.5)' : ''
             }}
           >
-            <span style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              backgroundColor: isLiveMode ? '#4CAF50' : '#999',
-              display: 'inline-block',
-              animation: isLiveMode ? 'pulse 2s infinite' : 'none'
-            }}></span>
-            {isLiveMode ? 'Live' : 'Demo'}
+            장애물
           </button>
 
           <Link to="/chatbot" className="floating-header-button">
@@ -647,6 +644,35 @@ function MainDashboard() {
               </div>
             )}
           </div>
+
+          {/* Accordion Panel 7: Report Generation */}
+          <div className="accordion-item">
+            <div
+              className={`accordion-header ${expandedPanel === 'report' ? 'active' : ''} ${singlePanelMode && expandedPanel !== 'report' ? 'hidden' : ''}`}
+              onClick={() => {
+                if (expandedPanel === 'report') {
+                  setExpandedPanel(null);
+                  setSinglePanelMode(false);
+                } else {
+                  setExpandedPanel('report');
+                  setSinglePanelMode(true);
+                }
+              }}
+            >
+              <span className="accordion-title">보고서 생성</span>
+              <span className="accordion-arrow">{expandedPanel === 'report' ? '▼' : '▶'}</span>
+            </div>
+            {expandedPanel === 'report' && (
+              <div className={`accordion-content ${singlePanelMode ? 'full-height' : ''}`}>
+                <ReportGenerator
+                  ships={ships}
+                  sosAlerts={sosAlerts}
+                  messages={messages}
+                  simulationRoutes={selectedShipRoute ? [selectedShipRoute] : []}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="map-container">
@@ -676,6 +702,7 @@ function MainDashboard() {
             }}
             isSimulationRunning={isSimulationRunning}
             showDensityHeatmap={showDensityHeatmap}  // Control density heatmap visibility
+            showObstacles={showObstacles}  // Control obstacles visibility
           />
 
           {/* CCTV Video Display */}

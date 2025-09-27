@@ -30,7 +30,8 @@ const MapViewReal = ({
   isSimulationRunning = false,  // Whether simulation is active
   simulationRoutes = [],  // Routes for simulation display
   selectedShipRoute = null,  // Selected ship's route to display
-  showDensityHeatmap = false  // Show ship density heatmap
+  showDensityHeatmap = false,  // Show ship density heatmap
+  showObstacles = false  // Control obstacles visibility
 }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -1173,7 +1174,8 @@ const MapViewReal = ({
         map.current.removeSource('obstacles');
       }
 
-      if (obstacles && obstacles.length > 0) {
+      // Only add obstacles if showObstacles is true
+      if (showObstacles && obstacles && obstacles.length > 0) {
       console.log('Drawing obstacles:', obstacles.length, 'obstacles');
       console.log('First obstacle:', obstacles[0]);
 
@@ -1231,7 +1233,7 @@ const MapViewReal = ({
     }, 100); // Small delay to ensure map is ready
 
     return () => clearTimeout(timer);
-  }, [obstacles, mapLoaded, pixelToLatLng]);
+  }, [obstacles, showObstacles, mapLoaded, pixelToLatLng]);
 
   return (
     <div style={{
