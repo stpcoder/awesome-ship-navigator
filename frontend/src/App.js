@@ -45,6 +45,7 @@ function MainDashboard() {
   const [selectedLiDAR, setSelectedLiDAR] = useState(null); // Selected LiDAR for statistics display
   const [showCCTVMarkers, setShowCCTVMarkers] = useState(false); // Show CCTV markers on map
   const [showLiDARMarkers, setShowLiDARMarkers] = useState(false); // Show LiDAR markers on map
+  const [showDensityHeatmap, setShowDensityHeatmap] = useState(false); // Show ship density heatmap
   const [showEntryExitStats, setShowEntryExitStats] = useState(false); // Show entry/exit statistics window
   const [isSimulationRunning, setIsSimulationRunning] = useState(false); // Simulation running state
   const [simulationTime, setSimulationTime] = useState(null); // Current simulation time
@@ -410,6 +411,17 @@ function MainDashboard() {
 
         <div style={{ display: 'flex', gap: '12px' }}>
           <button
+            className={`floating-header-button ${showDensityHeatmap ? 'active' : ''}`}
+            onClick={() => setShowDensityHeatmap(!showDensityHeatmap)}
+            style={{
+              backgroundColor: showDensityHeatmap ? '#FF6B00' : '',
+              color: showDensityHeatmap ? 'white' : ''
+            }}
+          >
+            밀집도
+          </button>
+
+          <button
             className="floating-header-button"
             onClick={() => setIsLiveMode(!isLiveMode)}
             style={{
@@ -659,6 +671,7 @@ function MainDashboard() {
               if (match) setSelectedShip(match);
             }}
             isSimulationRunning={isSimulationRunning}
+            showDensityHeatmap={showDensityHeatmap}  // Control density heatmap visibility
           />
 
           {/* CCTV Video Display */}

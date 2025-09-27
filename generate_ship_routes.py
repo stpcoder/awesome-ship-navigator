@@ -118,18 +118,18 @@ def generate_routes(ships: List[dict], start_time: datetime):
     routes = []
     existing_ship_routes = []  # Keep track of existing routes for collision checking
 
-    # Custom departure order: 2, 10, 3, 9, 5, 7, 4, 6, 8
-    # This creates better distribution and leaves space for Ship 1
+    # Custom departure order with tight 5-minute intervals starting at 2 minutes
+    # Compact schedule for rapid sequential departures
     ship_order_map = {
-        'SHIP002': {'order': 0, 'offset': 10},    # First to depart
-        'SHIP010': {'order': 1, 'offset': 30},    # 20 min gap for Ship 1 to fit in
-        'SHIP003': {'order': 2, 'offset': 45},
-        'SHIP009': {'order': 3, 'offset': 60},
-        'SHIP005': {'order': 4, 'offset': 75},
-        'SHIP007': {'order': 5, 'offset': 90},
-        'SHIP004': {'order': 6, 'offset': 105},
-        'SHIP006': {'order': 7, 'offset': 120},
-        'SHIP008': {'order': 8, 'offset': 135},
+        'SHIP002': {'order': 0, 'offset': 2},     # First ship: 2 minutes after start
+        'SHIP010': {'order': 1, 'offset': 7},     # Second ship: 7 minutes (5 min gap)
+        'SHIP003': {'order': 2, 'offset': 12},    # 12 minutes (5 min gap)
+        'SHIP009': {'order': 3, 'offset': 17},    # 17 minutes (5 min gap)
+        'SHIP005': {'order': 4, 'offset': 22},    # 22 minutes (5 min gap)
+        'SHIP007': {'order': 5, 'offset': 27},    # 27 minutes (5 min gap)
+        'SHIP004': {'order': 6, 'offset': 32},    # 32 minutes (5 min gap)
+        'SHIP006': {'order': 7, 'offset': 37},    # 37 minutes (5 min gap)
+        'SHIP008': {'order': 8, 'offset': 42},    # 42 minutes (5 min gap)
     }
 
     # Sort ships by custom order

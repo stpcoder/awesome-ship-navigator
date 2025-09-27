@@ -29,7 +29,8 @@ const MapViewReal = ({
   onShipSelect,    // Handle ship selection from marker click (optional)
   isSimulationRunning = false,  // Whether simulation is active
   simulationRoutes = [],  // Routes for simulation display
-  selectedShipRoute = null  // Selected ship's route to display
+  selectedShipRoute = null,  // Selected ship's route to display
+  showDensityHeatmap = false  // Show ship density heatmap
 }) => {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -74,7 +75,82 @@ const MapViewReal = ({
     return { x, y };
   }, []);
 
+  // Haversine distance calculation (in meters)
+  const calculateDistance = useCallback((lat1, lng1, lat2, lng2) => {
+    const R = 6371000; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lng2 - lng1) * Math.PI / 180;
 
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+  }, []);
+
+  // Calculate ship clusters for density visualization
+  const calculateShipClusters = useCallback((ships) => {
+    const clusters = [];
+    const processed = new Set();
+    const maxDistance = 300; // 300 meters radius for clustering
+
+    ships.forEach((ship, index) => {
+      if (!ship.latitude || !ship.longitude || processed.has(index)) return;
+
+      const cluster = {
+        ships: [ship],
+        indices: [index],
+        center: { lat: ship.latitude, lng: ship.longitude }
+      };
+
+      // Find all nearby ships for this cluster
+      ships.forEach((otherShip, otherIndex) => {
+        if (index === otherIndex || !otherShip.latitude || !otherShip.longitude || processed.has(otherIndex)) return;
+
+        const distance = calculateDistance(
+          cluster.center.lat,
+          cluster.center.lng,
+          otherShip.latitude,
+          otherShip.longitude
+        );
+
+        if (distance < maxDistance) {
+          cluster.ships.push(otherShip);
+          cluster.indices.push(otherIndex);
+          processed.add(otherIndex);
+
+          // Update cluster center (centroid)
+          const totalLat = cluster.ships.reduce((sum, s) => sum + s.latitude, 0);
+          const totalLng = cluster.ships.reduce((sum, s) => sum + s.longitude, 0);
+          cluster.center.lat = totalLat / cluster.ships.length;
+          cluster.center.lng = totalLng / cluster.ships.length;
+        }
+      });
+
+      if (cluster.ships.length > 1) {
+        // Calculate cluster radius based on furthest ship
+        let maxDist = 0;
+        cluster.ships.forEach(s => {
+          const dist = calculateDistance(
+            cluster.center.lat,
+            cluster.center.lng,
+            s.latitude,
+            s.longitude
+          );
+          maxDist = Math.max(maxDist, dist);
+        });
+        cluster.radius = Math.max(maxDist + 50, 100); // Add padding and minimum radius
+
+        clusters.push(cluster);
+        cluster.indices.forEach(idx => processed.add(idx));
+      }
+    });
+
+    return clusters;
+  }, [calculateDistance]);
 
   // Initialize map
   useEffect(() => {
@@ -258,6 +334,93 @@ const MapViewReal = ({
       }
     };
   }, [onMapClick, onSetStart, onSetGoal, mapLoaded, latLngToPixel]);
+
+  // Update density clusters
+  useEffect(() => {
+    if (!mapLoaded || !map.current || !showDensityHeatmap) {
+      // Remove clusters if not showing
+      if (map.current && map.current.getLayer('cluster-circles')) {
+        map.current.removeLayer('cluster-circles');
+      }
+      if (map.current && map.current.getSource('ship-clusters')) {
+        map.current.removeSource('ship-clusters');
+      }
+      return;
+    }
+
+    // Calculate clusters
+    const clusters = calculateShipClusters(ships);
+
+    // Create GeoJSON for cluster circles
+    const clusterFeatures = clusters.map(cluster => {
+      // Calculate color based on ship count (2-3: green, 4-5: yellow, 6+: red)
+      let color;
+      const shipCount = cluster.ships.length;
+      if (shipCount <= 2) {
+        color = 'rgba(0, 255, 0, 0.3)'; // Green
+      } else if (shipCount <= 3) {
+        color = 'rgba(128, 255, 0, 0.35)'; // Yellow-green
+      } else if (shipCount <= 4) {
+        color = 'rgba(255, 255, 0, 0.4)'; // Yellow
+      } else if (shipCount <= 5) {
+        color = 'rgba(255, 128, 0, 0.45)'; // Orange
+      } else {
+        color = 'rgba(255, 0, 0, 0.5)'; // Red
+      }
+
+      return {
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [cluster.center.lng, cluster.center.lat]
+        },
+        properties: {
+          radius: cluster.radius,
+          shipCount: shipCount,
+          color: color,
+          borderColor: color.replace(/[\d.]+\)/, '0.8)') // More opaque border
+        }
+      };
+    });
+
+    const geoJsonData = {
+      type: 'FeatureCollection',
+      features: clusterFeatures
+    };
+
+    // Add or update source
+    if (map.current.getSource('ship-clusters')) {
+      map.current.getSource('ship-clusters').setData(geoJsonData);
+    } else {
+      map.current.addSource('ship-clusters', {
+        type: 'geojson',
+        data: geoJsonData
+      });
+    }
+
+    // Add cluster circles layer if it doesn't exist
+    if (!map.current.getLayer('cluster-circles')) {
+      map.current.addLayer({
+        id: 'cluster-circles',
+        type: 'circle',
+        source: 'ship-clusters',
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, ['/', ['get', 'radius'], 15],
+            14, ['/', ['get', 'radius'], 8],
+            18, ['/', ['get', 'radius'], 4]
+          ],
+          'circle-color': ['get', 'color'],
+          'circle-stroke-color': ['get', 'borderColor'],
+          'circle-stroke-width': 2,
+          'circle-blur': 0.5
+        }
+      });
+    }
+  }, [ships, showDensityHeatmap, mapLoaded, calculateShipClusters]);
 
   // Update ship markers
   useEffect(() => {
