@@ -95,26 +95,38 @@ const MapViewReal = ({
   const calculateShipClusters = useCallback((ships) => {
     const clusters = [];
     const processed = new Set();
-    const maxDistance = 300; // 300 meters radius for clustering
+    const maxDistance = 1000; // Increased to 1000 meters radius for clustering
+
+    console.log('Calculating clusters for', ships.length, 'ships');
 
     ships.forEach((ship, index) => {
-      if (!ship.latitude || !ship.longitude || processed.has(index)) return;
+      // Handle both formats: {latitude, longitude} and {lati, longi}
+      const lat = ship.latitude || ship.lati;
+      const lng = ship.longitude || ship.longi;
+
+      if (!lat || !lng || processed.has(index)) return;
 
       const cluster = {
         ships: [ship],
         indices: [index],
-        center: { lat: ship.latitude, lng: ship.longitude }
+        center: { lat, lng }
       };
 
       // Find all nearby ships for this cluster
       ships.forEach((otherShip, otherIndex) => {
-        if (index === otherIndex || !otherShip.latitude || !otherShip.longitude || processed.has(otherIndex)) return;
+        if (index === otherIndex || processed.has(otherIndex)) return;
+
+        // Handle both formats for other ships too
+        const otherLat = otherShip.latitude || otherShip.lati;
+        const otherLng = otherShip.longitude || otherShip.longi;
+
+        if (!otherLat || !otherLng) return;
 
         const distance = calculateDistance(
           cluster.center.lat,
           cluster.center.lng,
-          otherShip.latitude,
-          otherShip.longitude
+          otherLat,
+          otherLng
         );
 
         if (distance < maxDistance) {
@@ -122,33 +134,42 @@ const MapViewReal = ({
           cluster.indices.push(otherIndex);
           processed.add(otherIndex);
 
-          // Update cluster center (centroid)
-          const totalLat = cluster.ships.reduce((sum, s) => sum + s.latitude, 0);
-          const totalLng = cluster.ships.reduce((sum, s) => sum + s.longitude, 0);
+          // Update cluster center (centroid) - handle both formats
+          const totalLat = cluster.ships.reduce((sum, s) => sum + (s.latitude || s.lati || 0), 0);
+          const totalLng = cluster.ships.reduce((sum, s) => sum + (s.longitude || s.longi || 0), 0);
           cluster.center.lat = totalLat / cluster.ships.length;
           cluster.center.lng = totalLng / cluster.ships.length;
         }
       });
 
-      if (cluster.ships.length > 1) {
+      // Include both single ships and clusters
+      if (cluster.ships.length === 1) {
+        // For single ships, create a small density circle
+        cluster.radius = 200; // 200m radius for single ships
+        clusters.push(cluster);
+        processed.add(index);
+      } else if (cluster.ships.length > 1) {
         // Calculate cluster radius based on furthest ship
         let maxDist = 0;
         cluster.ships.forEach(s => {
+          const shipLat = s.latitude || s.lati;
+          const shipLng = s.longitude || s.longi;
           const dist = calculateDistance(
             cluster.center.lat,
             cluster.center.lng,
-            s.latitude,
-            s.longitude
+            shipLat,
+            shipLng
           );
           maxDist = Math.max(maxDist, dist);
         });
-        cluster.radius = Math.max(maxDist + 50, 100); // Add padding and minimum radius
+        cluster.radius = Math.max(maxDist + 100, 200); // Add padding and minimum radius
 
         clusters.push(cluster);
         cluster.indices.forEach(idx => processed.add(idx));
       }
     });
 
+    console.log('Created', clusters.length, 'clusters (including single ships)');
     return clusters;
   }, [calculateDistance]);
 
@@ -337,36 +358,84 @@ const MapViewReal = ({
 
   // Update density clusters
   useEffect(() => {
-    if (!mapLoaded || !map.current || !showDensityHeatmap) {
+    console.log('Density heatmap effect triggered. showDensityHeatmap:', showDensityHeatmap, 'mapLoaded:', mapLoaded, 'ships count:', ships?.length);
+
+    if (!mapLoaded || !map.current) {
+      console.log('Map not ready, skipping density visualization');
+      return;
+    }
+
+    if (!showDensityHeatmap) {
       // Remove clusters if not showing
-      if (map.current && map.current.getLayer('cluster-circles')) {
+      console.log('Removing density clusters');
+      if (map.current.getLayer('cluster-circles')) {
         map.current.removeLayer('cluster-circles');
       }
-      if (map.current && map.current.getSource('ship-clusters')) {
+      if (map.current.getSource('ship-clusters')) {
         map.current.removeSource('ship-clusters');
       }
       return;
     }
 
-    // Calculate clusters
-    const clusters = calculateShipClusters(ships);
+    // Create simple density circles for all ships
+    console.log('Creating density visualization for ships:', ships);
 
-    // Create GeoJSON for cluster circles
+    // Alternative approach: Create a circle for each ship
+    const shipCircles = ships.map((ship, index) => {
+      const lat = ship.latitude || ship.lati;
+      const lng = ship.longitude || ship.longi;
+
+      if (!lat || !lng) return null;
+
+      return {
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [lng, lat]
+        },
+        properties: {
+          radius: 500, // Fixed radius for visualization
+          shipCount: 1,
+          color: 'rgba(255, 128, 0, 0.3)',
+          borderColor: 'rgba(255, 128, 0, 0.6)',
+          strokeWidth: 2
+        }
+      };
+    }).filter(f => f !== null);
+
+    console.log('Created', shipCircles.length, 'ship density circles');
+
+    // Also calculate clusters
+    const clusters = calculateShipClusters(ships);
+    console.log('Clusters created:', clusters);
+
+    // Create GeoJSON for cluster circles (if we want to use clustering)
     const clusterFeatures = clusters.map(cluster => {
-      // Calculate color based on ship count (2-3: green, 4-5: yellow, 6+: red)
+      // Calculate color based on ship count
       let color;
+      let strokeWidth;
       const shipCount = cluster.ships.length;
-      if (shipCount <= 2) {
+      if (shipCount === 1) {
+        color = 'rgba(0, 200, 0, 0.2)'; // Light green for single ships
+        strokeWidth = 1;
+      } else if (shipCount === 2) {
         color = 'rgba(0, 255, 0, 0.3)'; // Green
-      } else if (shipCount <= 3) {
+        strokeWidth = 2;
+      } else if (shipCount === 3) {
         color = 'rgba(128, 255, 0, 0.35)'; // Yellow-green
-      } else if (shipCount <= 4) {
+        strokeWidth = 2;
+      } else if (shipCount === 4) {
         color = 'rgba(255, 255, 0, 0.4)'; // Yellow
-      } else if (shipCount <= 5) {
+        strokeWidth = 2;
+      } else if (shipCount === 5) {
         color = 'rgba(255, 128, 0, 0.45)'; // Orange
+        strokeWidth = 3;
       } else {
         color = 'rgba(255, 0, 0, 0.5)'; // Red
+        strokeWidth = 3;
       }
+
+      console.log(`Cluster at [${cluster.center.lng}, ${cluster.center.lat}] with ${shipCount} ships, radius: ${cluster.radius}m`);
 
       return {
         type: 'Feature',
@@ -378,20 +447,27 @@ const MapViewReal = ({
           radius: cluster.radius,
           shipCount: shipCount,
           color: color,
-          borderColor: color.replace(/[\d.]+\)/, '0.8)') // More opaque border
+          borderColor: color.replace(/0\.\d+\)/, '0.7)'), // More opaque border
+          strokeWidth: strokeWidth
         }
       };
     });
 
+    // Use simple ship circles instead of clusters for now (for debugging)
     const geoJsonData = {
       type: 'FeatureCollection',
-      features: clusterFeatures
+      features: shipCircles  // Use simple circles for each ship
     };
+
+    console.log('GeoJSON data:', geoJsonData);
+    console.log('Features count:', geoJsonData.features.length);
 
     // Add or update source
     if (map.current.getSource('ship-clusters')) {
+      console.log('Updating existing ship-clusters source');
       map.current.getSource('ship-clusters').setData(geoJsonData);
     } else {
+      console.log('Adding new ship-clusters source');
       map.current.addSource('ship-clusters', {
         type: 'geojson',
         data: geoJsonData
@@ -400,6 +476,7 @@ const MapViewReal = ({
 
     // Add cluster circles layer if it doesn't exist
     if (!map.current.getLayer('cluster-circles')) {
+      console.log('Adding cluster-circles layer');
       map.current.addLayer({
         id: 'cluster-circles',
         type: 'circle',
@@ -409,16 +486,19 @@ const MapViewReal = ({
             'interpolate',
             ['linear'],
             ['zoom'],
-            10, ['/', ['get', 'radius'], 15],
-            14, ['/', ['get', 'radius'], 8],
-            18, ['/', ['get', 'radius'], 4]
+            10, ['/', ['get', 'radius'], 10],
+            14, ['/', ['get', 'radius'], 5],
+            18, ['/', ['get', 'radius'], 2]
           ],
           'circle-color': ['get', 'color'],
           'circle-stroke-color': ['get', 'borderColor'],
-          'circle-stroke-width': 2,
-          'circle-blur': 0.5
+          'circle-stroke-width': ['get', 'strokeWidth'],
+          'circle-blur': 0.5,
+          'circle-opacity': 0.8
         }
-      });
+      }, 'ship-route-planned'); // Add before ship route layer to ensure visibility
+    } else {
+      console.log('cluster-circles layer already exists');
     }
   }, [ships, showDensityHeatmap, mapLoaded, calculateShipClusters]);
 
