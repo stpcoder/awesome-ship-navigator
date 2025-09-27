@@ -30,46 +30,38 @@ def init_ships():
 
     ship_types = ["어선", "화물선", "여객선", "예인선", "기타"]
 
-    # Limit to 10 demo ships and position around '해성호' docking location within ±0.01 diagonally
-    base_docking_lat = None
-    base_docking_lng = None
+    # Place 10 demo ships using explicit anchors
+    # Diagonal anchors (A -> B)
+    A_lat, A_lng = 35.988466, 129.553781
+    B_lat, B_lng = 35.990669, 129.556166
+    # Sea anchor (C)
+    C_lat, C_lng = 35.982169, 129.575152
+    rng = random.Random(42)
 
     for i in range(10):
-        ship_id = f"EUM{i+1:03d}"  # EUM001, EUM002, etc.
-        # Ensure some fishing vessels exist
-        ship_type = random.choice(ship_types) if i % 3 != 0 else "어선"
+        ship_id = f"EUM{i+1:03d}"
+        # Ensure some fishing vessels exist for sea group
+        ship_type = "어선" if i % 3 == 0 else random.choice(ship_types)
 
-        # Determine docking positions based on '해성호' as reference
-        if i == 0:
-            # First ship is 해성호 and defines the base docking position near center
-            docking_lat = random.uniform(35.945, 35.965)
-            docking_lng = random.uniform(129.555, 129.575)
-            base_docking_lat = docking_lat
-            base_docking_lng = docking_lng
-        else:
-            # Diagonal offsets within ±0.01 around 해성호
-            diagonal_offsets = [
-                (-0.010, -0.010), (-0.008, -0.008), (-0.006, -0.006), (-0.004, -0.004), (-0.002, -0.002),
-                (0.002, 0.002), (0.004, 0.004), (0.006, 0.006), (0.008, 0.008)
-            ]
-            idx = (i - 1) % len(diagonal_offsets)
-            off_lat, off_lng = diagonal_offsets[idx]
-            docking_lat = (base_docking_lat or 35.955) + off_lat
-            docking_lng = (base_docking_lng or 129.565) + off_lng
-
-        # Fishing areas - slightly offshore (only for fishing vessels), near base
-        if ship_type == "어선":
-            base_fishing_lat = (base_docking_lat or 35.959) + 0.015
-            base_fishing_lng = (base_docking_lng or 129.590) + 0.020
-            fishing_lat = base_fishing_lat + random.uniform(-0.005, 0.005)
-            fishing_lng = base_fishing_lng + random.uniform(-0.005, 0.005)
-        else:
+        if i < 5:
+            # 5 ships along the A->B diagonal (including ends), evenly spaced
+            t = i / 4.0
+            docking_lat = A_lat + t * (B_lat - A_lat)
+            docking_lng = A_lng + t * (B_lng - A_lng)
             fishing_lat = None
             fishing_lng = None
+        else:
+            # 5 ships near C (sea) within small radius with fixed seed
+            r_lat = rng.uniform(-0.0035, 0.0035)
+            r_lng = rng.uniform(-0.0035, 0.0035)
+            fishing_lat = C_lat + r_lat
+            fishing_lng = C_lng + r_lng
+            docking_lat = None
+            docking_lng = None
 
         ship = {
             "ship_id": ship_id,
-            "name": "해성호" if i == 0 else (ship_names[i] if i < len(ship_names) else f"선박{i+1}호"),
+            "name": ship_names[i] if i < len(ship_names) else f"선박{i+1}호",
             "type": ship_type,
             "pol": "포항",
             "pol_addr": "경북 포항시 북구 항구동" if i % 2 == 0 else "경북 포항시 남구 구룡포읍",
@@ -204,23 +196,23 @@ def init_weather_data():
     return weather
 
 def init_realtime_locations(ships):
-    """Initialize real-time locations for the ships"""
+    """Initialize real-time locations for the ships (demo)
+    - First 5 ships (diagonal group): current = docking position
+    - Next 5 ships (sea group): current = fishing area position
+    """
     locations = []
 
-    # Create locations for first 10 ships
     for i, ship in enumerate(ships[:10]):
-        # Use docking position as current location for most ships
-        # Some ships can be at fishing areas
-        if ship.get('fishing_area_lat') and i % 3 == 0:
-            # Every third fishing vessel is at fishing area
-            lat = ship['fishing_area_lat']
-            lng = ship['fishing_area_lng']
-            speed = random.uniform(5.0, 12.0)  # Moving at fishing area
-        else:
-            # At docking position
+        if i < 5:
+            # Diagonal group: start at docking
             lat = ship['docking_lat']
             lng = ship['docking_lng']
-            speed = 0.0  # Docked
+            speed = 0.0
+        else:
+            # Sea group: start at fishing area
+            lat = ship['fishing_area_lat']
+            lng = ship['fishing_area_lng']
+            speed = random.uniform(1.0, 6.0)
 
         location = {
             "dev_id": 100 + i,
