@@ -546,11 +546,14 @@ const MapViewReal = ({
         el.style.width = isSelected ? '30px' : '20px';
         el.style.height = isSelected ? '30px' : '20px';
         el.style.borderRadius = '50%';
-        el.style.backgroundColor = isSelected ? '#667eea' : '#7B68EE';
-        el.style.boxShadow = isSelected ? '0 0 20px rgba(102, 126, 234, 0.8)' : '0 0 8px rgba(123, 104, 238, 0.4)';
+        // Changed from purple to blue colors
+        el.style.backgroundColor = isSelected ? '#4169E1' : '#5B8DEE';  // Royal Blue and lighter blue
+        el.style.boxShadow = isSelected ? '0 0 20px rgba(65, 105, 225, 0.8)' : '0 0 8px rgba(91, 141, 238, 0.4)';
         el.style.border = isSelected ? '3px solid white' : '2px solid rgba(255, 255, 255, 0.8)';
         el.style.cursor = 'pointer';
         el.style.zIndex = isSelected ? '1000' : '100';
+        // Adjust opacity when density heatmap is showing
+        el.style.opacity = showDensityHeatmap ? '0.7' : '1';
 
         // Add popup
         const popup = new mapboxgl.Popup({ offset: 25 })
@@ -585,7 +588,7 @@ const MapViewReal = ({
         });
       }
     });
-  }, [ships, selectedShip, mapLoaded]);
+  }, [ships, selectedShip, mapLoaded, showDensityHeatmap]);
 
   // Display SOS alerts on the map
   useEffect(() => {

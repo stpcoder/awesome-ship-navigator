@@ -417,8 +417,9 @@ function MainDashboard() {
               setShowDensityHeatmap(!showDensityHeatmap);
             }}
             style={{
-              backgroundColor: showDensityHeatmap ? '#FF6B00' : '',
-              color: showDensityHeatmap ? 'white' : ''
+              backgroundColor: showDensityHeatmap ? 'rgba(102, 126, 234, 0.9)' : '',  // Using purple like sidebar buttons
+              color: showDensityHeatmap ? 'white' : '',
+              boxShadow: showDensityHeatmap ? '0 0 10px rgba(102, 126, 234, 0.5)' : ''
             }}
           >
             밀집도
