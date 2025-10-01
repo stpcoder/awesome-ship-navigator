@@ -17,6 +17,10 @@
 
 ### 💻 데스크톱 화면
 
+#### 데모 비디오 
+
+![영상 보러가기](https://youtu.be/ZPkliuqTGSc)
+
 #### 메인 대시보드
 ![대시보드 메인 화면](screenshots/desktop/dashboard-main.png)
 *실시간 선박 위치 추적 및 지도 모니터링*
