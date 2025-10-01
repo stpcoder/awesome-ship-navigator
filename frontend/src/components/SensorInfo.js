@@ -103,7 +103,7 @@ const SensorInfo = ({ sensorData, onSensorSelect }) => {
   return (
     <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
       <div style={{ marginBottom: '1rem' }}>
-        <h3 style={{ margin: 0 }}>센서 정보</h3>
+        <h3 style={{ margin: 0 }}>종합 정보</h3>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>

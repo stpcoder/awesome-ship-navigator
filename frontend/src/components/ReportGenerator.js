@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import jsPDF from 'jspdf';
+// html2canvas removed - using text-based PDF generation
 
 const ReportGenerator = ({ ships, sosAlerts, messages, simulationRoutes }) => {
   const [isGenerating, setIsGenerating] = useState(false);
@@ -58,8 +60,9 @@ const ReportGenerator = ({ ships, sosAlerts, messages, simulationRoutes }) => {
         sent_messages: messages.filter(m => m.sender_id === 'control_center').length,
         received_messages: messages.filter(m => m.recipient_id === 'control_center').length
       },
+      departures: simulationRoutes || [],
       schedule_summary: {
-        planned_departures: simulationRoutes.length,
+        planned_departures: simulationRoutes?.length || 0,
         completed_routes: 0 // Would need backend data for this
       }
     };
@@ -68,179 +71,266 @@ const ReportGenerator = ({ ships, sosAlerts, messages, simulationRoutes }) => {
     setShowReport(true);
   };
 
-  const downloadReport = () => {
+  const downloadReportPDF = async () => {
     if (!reportData) return;
 
-    // Create formatted text content
-    let content = `==================================\n`;
-    content += `일일 운항 보고서\n`;
-    content += `==================================\n\n`;
-    content += `날짜: ${reportData.date || new Date().toLocaleDateString('ko-KR')}\n`;
-    content += `시간: ${reportData.time || new Date().toLocaleTimeString('ko-KR')}\n\n`;
-
-    content += `[선박 현황]\n`;
-    content += `총 선박 수: ${reportData.ship_status?.total_ships || 0}\n`;
-    content += `운항 중: ${reportData.ship_status?.active_ships || 0}\n`;
-    content += `정박 중: ${reportData.ship_status?.docked_ships || 0}\n\n`;
-
-    content += `[긴급 상황]\n`;
-    content += `총 SOS 알림: ${reportData.emergency_summary?.total_sos_alerts || 0}\n`;
-    content += `활성 알림: ${reportData.emergency_summary?.active_alerts || 0}\n`;
-    content += `해결된 알림: ${reportData.emergency_summary?.resolved_alerts || 0}\n\n`;
-
-    content += `[통신 내역]\n`;
-    content += `총 메시지: ${reportData.communication_summary?.total_messages || 0}\n`;
-    content += `발신: ${reportData.communication_summary?.sent_messages || 0}\n`;
-    content += `수신: ${reportData.communication_summary?.received_messages || 0}\n\n`;
-
-    if (reportData.departures?.length > 0) {
-      content += `[출항 스케줄]\n`;
-      reportData.departures.forEach(dep => {
-        content += `${dep.ship_name}: ${dep.departure_time} 출발 → ${dep.arrival_time} 도착\n`;
+    try {
+      // Create PDF - jsPDF doesn't natively support Korean, so we'll use Unicode escape sequences
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
       });
-      content += '\n';
+
+      // PDF settings
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 20;
+      const lineHeight = 8;
+      let yPosition = margin;
+
+      // Helper function to add text (using basic ASCII for Korean compatibility)
+      const addText = (text, fontSize = 10, isBold = false) => {
+        pdf.setFontSize(fontSize);
+        if (isBold) {
+          pdf.setFont('helvetica', 'bold');
+        } else {
+          pdf.setFont('helvetica', 'normal');
+        }
+
+        // For Korean text, we'll use English labels for now
+        const lines = pdf.splitTextToSize(text, pageWidth - 2 * margin);
+
+        lines.forEach(line => {
+          if (yPosition > pageHeight - margin) {
+            pdf.addPage();
+            yPosition = margin;
+          }
+          // Convert Korean text to escaped format for display
+          const displayText = line.replace(/[\u3131-\uD79D]/g, function(match) {
+            return '\\u' + ('0000' + match.charCodeAt(0).toString(16)).slice(-4);
+          });
+
+          pdf.text(line, margin, yPosition);
+          yPosition += lineHeight;
+        });
+      };
+
+      // Add title
+      pdf.setFontSize(18);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Daily Operation Report', pageWidth / 2, yPosition, { align: 'center' });
+      yPosition += lineHeight * 2;
+
+      // Add report info
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('[Report Information]', margin, yPosition);
+      yPosition += lineHeight;
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Date: ${reportData.date || new Date().toLocaleDateString('ko-KR')}`, margin, yPosition);
+      yPosition += lineHeight;
+      pdf.text(`Time: ${reportData.time || new Date().toLocaleTimeString('ko-KR')}`, margin, yPosition);
+      yPosition += lineHeight * 1.5;
+
+      // Add ship status
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('[Ship Status]', margin, yPosition);
+      yPosition += lineHeight;
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Total Ships: ${reportData.ship_status?.total_ships || 0}`, margin, yPosition);
+      yPosition += lineHeight;
+      pdf.text(`Active Ships: ${reportData.ship_status?.active_ships || 0}`, margin, yPosition);
+      yPosition += lineHeight;
+      pdf.text(`Docked Ships: ${reportData.ship_status?.docked_ships || 0}`, margin, yPosition);
+      yPosition += lineHeight * 1.5;
+
+      // Add emergency summary
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('[Emergency Status]', margin, yPosition);
+      yPosition += lineHeight;
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Total SOS Alerts: ${reportData.emergency_summary?.total_sos_alerts || 0}`, margin, yPosition);
+      yPosition += lineHeight;
+      pdf.text(`Active Alerts: ${reportData.emergency_summary?.active_alerts || 0}`, margin, yPosition);
+      yPosition += lineHeight;
+      pdf.text(`Resolved Alerts: ${reportData.emergency_summary?.resolved_alerts || 0}`, margin, yPosition);
+      yPosition += lineHeight * 1.5;
+
+      // Add ship plans
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('[Ship Schedule]', margin, yPosition);
+      yPosition += lineHeight;
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Total Plans: ${reportData.departures?.length || 10}`, margin, yPosition);
+      yPosition += lineHeight;
+
+      if (reportData.departures && reportData.departures.length > 0) {
+        reportData.departures.slice(0, 5).forEach(dep => {
+          const depTime = new Date(dep.departure_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+          const arrTime = new Date(dep.arrival_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+          pdf.text(`  - ${dep.ship_name}: ${depTime} -> ${arrTime}`, margin, yPosition);
+          yPosition += lineHeight;
+        });
+        if (reportData.departures.length > 5) {
+          pdf.text(`  ... and ${reportData.departures.length - 5} more`, margin, yPosition);
+          yPosition += lineHeight;
+        }
+      }
+
+      // Add incidents if exists
+      if (reportData.incidents && reportData.incidents.length > 0) {
+        yPosition += lineHeight;
+        pdf.setFontSize(12);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('[Incident Records]', margin, yPosition);
+        yPosition += lineHeight;
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        reportData.incidents.forEach(incident => {
+          const incidentText = `  - ${incident.time} - ${incident.ship_name}: ${incident.description} (${incident.status})`;
+          const lines = pdf.splitTextToSize(incidentText, pageWidth - 2 * margin);
+          lines.forEach(line => {
+            if (yPosition > pageHeight - margin) {
+              pdf.addPage();
+              yPosition = margin;
+            }
+            pdf.text(line, margin, yPosition);
+            yPosition += lineHeight;
+          });
+        });
+      }
+
+      // Generate filename with date
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+
+      // Save PDF
+      pdf.save(`${dateStr}_report.pdf`);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('PDF 생성 중 오류가 발생했습니다.');
     }
-
-    if (reportData.incidents?.length > 0) {
-      content += `[사건 기록]\n`;
-      reportData.incidents.forEach(incident => {
-        content += `• ${incident.time}: ${incident.description}\n`;
-      });
-      content += '\n';
-    }
-
-    content += `==================================\n`;
-    content += `보고서 생성 완료\n`;
-
-    // Create and download file
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `daily_report_${new Date().toISOString().split('T')[0]}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   return (
     <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '1rem' }}>
-        <h3 style={{ marginBottom: '1rem' }}>일일 보고서 생성</h3>
+      {!showReport ? (
+        <div style={{ padding: '1rem' }}>
+          <h3 style={{ marginBottom: '1rem', color: 'var(--text-primary)' }}>일일 보고서 생성</h3>
 
-        <button
-          onClick={generateReport}
-          disabled={isGenerating}
-          className="modern-button button-primary"
-          style={{ width: '100%', marginBottom: '1rem' }}
-        >
-          {isGenerating ? '보고서 생성 중...' : '보고서 생성'}
-        </button>
+          <button
+            onClick={generateReport}
+            disabled={isGenerating}
+            className="modern-button button-primary"
+            style={{ width: '100%', marginBottom: '1rem' }}
+          >
+            {isGenerating ? '보고서 생성 중...' : '보고서 생성'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ padding: '1rem', height: '100%', overflowY: 'auto' }}>
+          <div style={{ marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, color: 'var(--text-primary)' }}>일일 운항 보고서</h3>
+          </div>
 
-        {showReport && reportData && (
-          <div style={{
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            borderRadius: '8px',
-            padding: '1rem',
-            marginTop: '1rem',
-            maxHeight: 'calc(100vh - 300px)',
-            overflowY: 'auto'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '1rem'
-            }}>
-              <h4 style={{ margin: 0 }}>일일 운항 보고서</h4>
-              <button
-                onClick={() => setShowReport(false)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#fff',
-                  fontSize: '1.5rem',
-                  cursor: 'pointer'
-                }}
-              >
-                ×
-              </button>
-            </div>
-
-            <div style={{ fontSize: '0.9rem', lineHeight: '1.6' }}>
-              <div style={{ marginBottom: '1rem' }}>
-                <strong>날짜:</strong> {reportData.date || new Date().toLocaleDateString('ko-KR')}<br />
-                <strong>시간:</strong> {reportData.time || new Date().toLocaleTimeString('ko-KR')}
+          {reportData && (
+            <div id="report-content">
+              <div style={{ marginBottom: '0.75rem', paddingBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
+                  보고서 정보
+                </div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                  날짜: {reportData.date || new Date().toLocaleDateString('ko-KR')}<br />
+                  시간: {reportData.time || new Date().toLocaleTimeString('ko-KR')}
+                </div>
               </div>
 
-              <div style={{
-                borderTop: '1px solid rgba(255,255,255,0.2)',
-                paddingTop: '0.5rem',
-                marginBottom: '1rem'
-              }}>
-                <h5 style={{ color: '#4fc3f7' }}>선박 현황</h5>
-                <div style={{ paddingLeft: '1rem' }}>
+              <div style={{ marginBottom: '0.75rem', paddingBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: '#4fc3f7', fontSize: '0.95rem' }}>
+                  선박 현황
+                </div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
                   총 선박: {reportData.ship_status?.total_ships || 0}척<br />
                   운항 중: {reportData.ship_status?.active_ships || 0}척<br />
                   정박 중: {reportData.ship_status?.docked_ships || 0}척
                 </div>
               </div>
 
-              <div style={{
-                borderTop: '1px solid rgba(255,255,255,0.2)',
-                paddingTop: '0.5rem',
-                marginBottom: '1rem'
-              }}>
-                <h5 style={{ color: '#ff6b6b' }}>긴급 상황</h5>
-                <div style={{ paddingLeft: '1rem' }}>
+              <div style={{ marginBottom: '0.75rem', paddingBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: '#ff6b6b', fontSize: '0.95rem' }}>
+                  긴급 상황
+                </div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
                   총 SOS 알림: {reportData.emergency_summary?.total_sos_alerts || 0}건<br />
                   활성 알림: {reportData.emergency_summary?.active_alerts || 0}건<br />
                   해결된 알림: {reportData.emergency_summary?.resolved_alerts || 0}건
                 </div>
               </div>
 
-              <div style={{
-                borderTop: '1px solid rgba(255,255,255,0.2)',
-                paddingTop: '0.5rem',
-                marginBottom: '1rem'
-              }}>
-                <h5 style={{ color: '#66bb6a' }}>통신 내역</h5>
-                <div style={{ paddingLeft: '1rem' }}>
-                  총 메시지: {reportData.communication_summary?.total_messages || 0}건<br />
-                  발신: {reportData.communication_summary?.sent_messages || 0}건<br />
-                  수신: {reportData.communication_summary?.received_messages || 0}건
+
+              <div style={{ marginBottom: '0.75rem', paddingBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: '#ffa726', fontSize: '0.95rem' }}>
+                  선박 계획
+                </div>
+                <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                  총 계획: {reportData.departures?.length || 0}건
                 </div>
               </div>
 
               {reportData.departures && reportData.departures.length > 0 && (
-                <div style={{
-                  borderTop: '1px solid rgba(255,255,255,0.2)',
-                  paddingTop: '0.5rem',
-                  marginBottom: '1rem'
-                }}>
-                  <h5 style={{ color: '#ffa726' }}>출항 스케줄</h5>
-                  <div style={{ paddingLeft: '1rem' }}>
-                    {reportData.departures.map((dep, idx) => (
+                <div style={{ marginBottom: '0.75rem', paddingBottom: '0.75rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                  <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: '#ffa726', fontSize: '0.95rem' }}>
+                    선박 운항 일정
+                  </div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                    {reportData.departures.slice(0, 3).map((dep, idx) => (
                       <div key={idx} style={{ marginBottom: '0.3rem' }}>
-                        {dep.ship_name}: {new Date(dep.departure_time).toLocaleTimeString('ko-KR')} 출발
+                        {dep.ship_name}: {new Date(dep.departure_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} → {new Date(dep.arrival_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    ))}
+                    {reportData.departures.length > 3 && (
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.3rem' }}>
+                        ... 외 {reportData.departures.length - 3}개
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {reportData.incidents && reportData.incidents.length > 0 && (
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ fontWeight: '600', marginBottom: '0.3rem', color: '#e91e63', fontSize: '0.95rem' }}>
+                    사건 기록
+                  </div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                    {reportData.incidents.map((incident, idx) => (
+                      <div key={idx} style={{ marginBottom: '0.3rem' }}>
+                        • {incident.time} - {incident.ship_name}: {incident.description} ({incident.status})
                       </div>
                     ))}
                   </div>
                 </div>
               )}
             </div>
+          )}
 
-            <button
-              onClick={downloadReport}
-              className="modern-button"
-              style={{ width: '100%', marginTop: '1rem' }}
-            >
-              보고서 다운로드 (.txt)
-            </button>
-          </div>
-        )}
-      </div>
+          <button
+            onClick={downloadReportPDF}
+            className="modern-button"
+            style={{ width: '100%' }}
+          >
+            보고서 다운로드 (PDF)
+          </button>
+        </div>
+      )}
     </div>
   );
 };

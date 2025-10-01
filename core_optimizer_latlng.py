@@ -124,6 +124,12 @@ class ShipRoute:
         if not self.path:
             return
 
+        # Ensure departure_time is a datetime object
+        if isinstance(self.departure_time, (int, float)):
+            # Convert minutes to datetime
+            import datetime as dt
+            self.departure_time = dt.datetime.now() + dt.timedelta(minutes=self.departure_time)
+
         self.timestamps = [self.departure_time]
         cumulative_time = self.departure_time
         self.path_length_nm = 0
@@ -137,7 +143,9 @@ class ShipRoute:
             self.path_length_nm += distance_nm
 
             # Calculate travel time (distance / speed)
-            travel_hours = distance_nm / self.speed_knots
+            # Handle zero speed by using default speed
+            speed = self.speed_knots if self.speed_knots > 0 else 10.0  # Default to 10 knots if speed is 0
+            travel_hours = distance_nm / speed
             cumulative_time += timedelta(hours=travel_hours)
             self.timestamps.append(cumulative_time)
 
@@ -716,18 +724,32 @@ class RouteOptimizer:
         import math
 
         current_time = datetime.now()
-        best_time = 0  # Default to now
+
+        # Determine base requested departure as datetime
+        # new_ship.departure_time may be minutes-from-now (number) or a datetime
+        if isinstance(new_ship.departure_time, (int, float)):
+            base_departure_dt = current_time + timedelta(minutes=float(new_ship.departure_time))
+            base_departure_minutes = float(new_ship.departure_time)
+        else:
+            base_departure_dt = new_ship.departure_time
+            base_departure_minutes = max(0.0, (base_departure_dt - current_time).total_seconds() / 60.0)
+
+        # Only allow small positive adjustments to reduce disruption
+        min_offset = 3
+        max_offset = min(10, time_window_minutes)
+        step_minutes = 1
+
+        best_time = base_departure_minutes  # default to requested time
         min_conflicts = float('inf')
         best_min_distance = 0
 
-        # Check various departure times within the window
-        time_intervals = 30  # Check every 30 minutes
-        for minutes_offset in range(0, time_window_minutes, time_intervals):
-            test_departure = current_time + timedelta(minutes=minutes_offset)
+        # Search only within [base+3, base+10] minutes by 1-minute steps
+        for minutes_offset in range(min_offset, max_offset + 1, step_minutes):
+            test_departure = base_departure_dt + timedelta(minutes=minutes_offset)
             conflicts = 0
             min_distance = float('inf')
 
-            # Update ship's timestamps for this departure time
+            # Update ship's timestamps for this candidate departure time
             test_ship = ShipRoute(
                 name=new_ship.name,
                 ship_id=new_ship.ship_id,
@@ -785,7 +807,8 @@ class RouteOptimizer:
             # Select time with minimum conflicts and maximum minimum distance
             if conflicts < min_conflicts or (conflicts == min_conflicts and min_distance > best_min_distance):
                 min_conflicts = conflicts
-                best_time = minutes_offset
+                # Return value is minutes-from-now; base + offset relative to now
+                best_time = base_departure_minutes + minutes_offset
                 best_min_distance = min_distance
 
         return float(best_time)

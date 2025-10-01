@@ -591,79 +591,134 @@ const MapViewReal = ({
     });
   }, [ships, selectedShip, mapLoaded, showDensityHeatmap]);
 
+  // Store SOS markers separately for better persistence
+  const sosMarkersRef = useRef({});
+  const lastSOSDataRef = useRef(null);
+
   // Display SOS alerts on the map
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
 
-    // Remove old SOS markers
-    Object.entries(markersRef.current).forEach(([key, marker]) => {
-      if (key.startsWith('sos-')) {
-        marker.remove();
-        delete markersRef.current[key];
-      }
+    // Check if data has actually changed by comparing IDs and status
+    const currentSOSData = sosAlerts
+      .filter(alert => alert.status === 'active')
+      .map(alert => ({
+        id: alert.id,
+        lat: parseFloat(alert.latitude),
+        lng: parseFloat(alert.longitude),
+        status: alert.status
+      }))
+      .filter(alert => !isNaN(alert.lat) && !isNaN(alert.lng));
+
+    // Compare with last data to see if we actually need to update
+    const lastData = lastSOSDataRef.current || [];
+    const hasChanged = JSON.stringify(currentSOSData.map(a => a.id).sort()) !==
+                       JSON.stringify(lastData.map(a => a.id).sort());
+
+    if (!hasChanged && lastData.length > 0) {
+      // No real changes, skip update to prevent flickering
+      return;
+    }
+
+    lastSOSDataRef.current = currentSOSData;
+
+    // Track which SOS alerts are still active
+    const activeSOSIds = new Set();
+
+    // Process each active SOS alert
+    sosAlerts.filter(alert => alert.status === 'active').forEach(alert => {
+      const lat = parseFloat(alert.latitude);
+      const lng = parseFloat(alert.longitude);
+
+      if (isNaN(lat) || isNaN(lng)) return;
+
+      const markerId = `sos-${alert.id}`;
+      activeSOSIds.add(markerId);
+
+      // Check if marker already exists
+      if (sosMarkersRef.current[markerId]) {
+        // Update position if needed
+        const existingMarker = sosMarkersRef.current[markerId];
+        const currentPos = existingMarker.getLngLat();
+        if (currentPos.lng !== lng || currentPos.lat !== lat) {
+          existingMarker.setLngLat([lng, lat]);
+        }
+      } else {
+        // Create new marker only if it doesn't exist
+        console.log('Creating new SOS marker at:', lat, lng);
+
+          // Create simple red circle marker for SOS alerts
+          const el = document.createElement('div');
+          el.className = 'sos-marker';
+          el.style.width = '20px';
+          el.style.height = '20px';
+          el.style.borderRadius = '50%';
+          el.style.backgroundColor = '#ff4444';
+          el.style.border = '2px solid white';
+          el.style.boxShadow = '0 0 10px rgba(255, 68, 68, 0.8)';
+          el.style.cursor = 'pointer';
+          el.style.zIndex = '2000';
+          el.style.position = 'relative';
+
+          // Add blinking animation
+          el.style.animation = 'pulse-sos 2s infinite';
+
+          // Add CSS animation if not already added
+          if (!document.querySelector('#sos-pulse-style')) {
+            const style = document.createElement('style');
+            style.id = 'sos-pulse-style';
+            style.innerHTML = `
+              @keyframes pulse-sos {
+                0% {
+                  opacity: 1;
+                  box-shadow: 0 0 10px rgba(255, 68, 68, 0.8);
+                }
+                50% {
+                  opacity: 0.8;
+                  box-shadow: 0 0 15px rgba(255, 68, 68, 1);
+                }
+                100% {
+                  opacity: 1;
+                  box-shadow: 0 0 10px rgba(255, 68, 68, 0.8);
+                }
+              }
+            `;
+            document.head.appendChild(style);
+          }
+
+          // Create popup with SOS details
+          const popup = new mapboxgl.Popup({ offset: 25 })
+            .setHTML(`
+              <div style="padding: 10px; min-width: 200px;">
+                <h3 style="margin: 0 0 10px; color: #ff0000;">🆘 긴급 신호</h3>
+                <p style="margin: 5px 0;"><strong>선박:</strong> ${alert.ship_name || alert.ship_id}</p>
+                <p style="margin: 5px 0;"><strong>유형:</strong> ${
+                  alert.emergency_type === 'collision' ? '충돌 위험' :
+                  alert.emergency_type === 'fire' ? '화재' :
+                  alert.emergency_type === 'engine' ? '엔진 고장' :
+                  alert.emergency_type === 'medical' ? '의료 응급' :
+                  alert.emergency_type
+                }</p>
+                <p style="margin: 5px 0;"><strong>메시지:</strong> ${alert.message}</p>
+                <p style="margin: 5px 0;"><strong>위치:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}</p>
+                <p style="margin: 5px 0; color: #666;"><strong>시각:</strong> ${new Date(alert.created_at).toLocaleString('ko-KR')}</p>
+              </div>
+            `);
+
+          const marker = new mapboxgl.Marker(el)
+            .setLngLat([lng, lat])
+            .setPopup(popup)
+            .addTo(map.current);
+
+          sosMarkersRef.current[markerId] = marker;
+        }
     });
 
-    // Add SOS alert markers
-    sosAlerts.forEach(alert => {
-      if (alert.latitude && alert.longitude && alert.status === 'active') {
-        // Create custom SOS marker element with blinking animation
-        const el = document.createElement('div');
-        el.className = 'sos-marker';
-        el.style.width = '40px';
-        el.style.height = '40px';
-        el.style.borderRadius = '50%';
-        el.style.backgroundColor = '#FF6B6B';
-        el.style.border = '4px solid white';
-        el.style.boxShadow = '0 0 20px rgba(255, 107, 107, 0.8)';
-        el.style.display = 'flex';
-        el.style.alignItems = 'center';
-        el.style.justifyContent = 'center';
-        el.style.cursor = 'pointer';
-        el.style.zIndex = '2000';
-        el.innerHTML = '<span style="color: white; font-size: 24px; font-weight: bold;">🆘</span>';
-
-        // Add blinking animation
-        el.style.animation = 'blink 1s infinite';
-
-        // Add CSS animation if not already added
-        if (!document.querySelector('#sos-blink-style')) {
-          const style = document.createElement('style');
-          style.id = 'sos-blink-style';
-          style.innerHTML = `
-            @keyframes blink {
-              0% { opacity: 1; transform: scale(1); }
-              50% { opacity: 0.6; transform: scale(1.1); }
-              100% { opacity: 1; transform: scale(1); }
-            }
-          `;
-          document.head.appendChild(style);
-        }
-
-        // Create popup with SOS details
-        const popup = new mapboxgl.Popup({ offset: 25 })
-          .setHTML(`
-            <div style="padding: 10px; min-width: 200px;">
-              <h3 style="margin: 0 0 10px; color: #ff0000;">🆘 긴급 신호</h3>
-              <p style="margin: 5px 0;"><strong>선박:</strong> ${alert.ship_name || alert.ship_id}</p>
-              <p style="margin: 5px 0;"><strong>유형:</strong> ${
-                alert.emergency_type === 'collision' ? '충돌 위험' :
-                alert.emergency_type === 'fire' ? '화재' :
-                alert.emergency_type === 'engine' ? '엔진 고장' :
-                alert.emergency_type === 'medical' ? '의료 응급' :
-                alert.emergency_type
-              }</p>
-              <p style="margin: 5px 0;"><strong>메시지:</strong> ${alert.message}</p>
-              <p style="margin: 5px 0;"><strong>위치:</strong> ${alert.latitude.toFixed(4)}, ${alert.longitude.toFixed(4)}</p>
-              <p style="margin: 5px 0; color: #666;"><strong>시각:</strong> ${new Date(alert.created_at).toLocaleString('ko-KR')}</p>
-            </div>
-          `);
-
-        const marker = new mapboxgl.Marker(el)
-          .setLngLat([alert.longitude, alert.latitude])
-          .setPopup(popup)
-          .addTo(map.current);
-
-        markersRef.current[`sos-${alert.id}`] = marker;
+    // Remove markers that are no longer active (only check SOS-specific storage)
+    Object.entries(sosMarkersRef.current).forEach(([key, marker]) => {
+      if (!activeSOSIds.has(key)) {
+        marker.remove();
+        delete sosMarkersRef.current[key];
       }
     });
   }, [sosAlerts, mapLoaded]);

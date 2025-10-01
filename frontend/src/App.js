@@ -504,7 +504,7 @@ function MainDashboard() {
                 }
               }}
             >
-              <span className="accordion-title">센서 정보</span>
+              <span className="accordion-title">종합 정보</span>
               <span className="accordion-arrow">{expandedPanel === 'sensorInfo' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'sensorInfo' && (
@@ -596,6 +596,11 @@ function MainDashboard() {
               }}
             >
               <span className="accordion-title">긴급 상황</span>
+              {sosAlerts.filter(alert => alert.status === 'active').length > 0 && (
+                <span className="sos-badge">
+                  {sosAlerts.filter(alert => alert.status === 'active').length}
+                </span>
+              )}
               <span className="accordion-arrow">{expandedPanel === 'emergency' ? '▼' : '▶'}</span>
             </div>
             {expandedPanel === 'emergency' && (

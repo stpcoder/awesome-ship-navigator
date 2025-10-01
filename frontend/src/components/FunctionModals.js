@@ -28,66 +28,387 @@ const Modal = ({ isOpen, onClose, children, title }) => {
   );
 };
 
-// Recommend Departure Modal
+// Recommend Departure Modal - Completely redesigned for route planning
 export const RecommendDepartureModal = ({ isOpen, onClose, parameters }) => {
-  const [recommendation, setRecommendation] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [existingRoute, setExistingRoute] = useState(null);
+  const [hasRoute, setHasRoute] = useState(false);
+  const [uiMode, setUiMode] = useState('checking'); // 'checking', 'no-route', 'has-route', 'planning', 'success'
+  const [timeInput, setTimeInput] = useState('');
+  const [routeType, setRouteType] = useState('departure'); // 'departure' or 'arrival'
+  const [calculatedRoute, setCalculatedRoute] = useState(null);
+  const [calculating, setCalculating] = useState(false);
+  const [optimalTime, setOptimalTime] = useState(3); // Store optimal time suggestion (fallback)
 
+  // Map chatbot parameters to UI state (route type and time)
   useEffect(() => {
-    if (isOpen) {
-      fetchRecommendation();
+    if (!isOpen || !parameters) return;
+
+    // Route type from chatbot (parameters.type: 'departure' | 'arrival')
+    if (parameters.type === 'departure' || parameters.type === 'arrival') {
+      setRouteType(parameters.type);
+    }
+
+    // Check if route was already calculated by chatbot
+    if (parameters.precalculatedRoute) {
+      console.log('Using precalculated route from chatbot:', parameters.precalculatedRoute);
+      setCalculatedRoute(parameters.precalculatedRoute);
+      setHasRoute(true);
+      setUiMode('has-route');
+
+      // Show the route details immediately
+      const route = parameters.precalculatedRoute;
+      const direction = routeType === 'departure' ? '출항' : '입항';
+      const timeStr = '3분 후';
+
+      // Display the precalculated route info
+      console.log(`✅ ${direction} 경로가 이미 계산되었습니다.`);
+      console.log(`출발 시간: ${timeStr}`);
+      console.log(`출발: ${route.from?.type || '정박지'}`);
+      console.log(`도착: ${route.to?.type || '어장'}`);
+      console.log(`거리: ${route.distance_nm?.toFixed(1) || 'N/A'} 해리`);
+    }
+
+    // Preferred time from chatbot - handle both preferred_time and user_requested_time
+    const preferred = parameters.preferred_time || parameters.user_requested_time;
+    if (preferred !== undefined && preferred !== null) {
+      // If it's already a number (user_requested_time from backend)
+      if (typeof preferred === 'number') {
+        setTimeInput(String(preferred));
+      }
+      // If it's a string format (e.g., 'now', '30m', '1h', '2h30m')
+      else if (typeof preferred === 'string') {
+        const minutes = (() => {
+          if (preferred === 'now') return 0;
+          const hMatch = preferred.match(/(\d+)h/);
+          const mMatch = preferred.match(/(\d+)m/);
+          const h = hMatch ? parseInt(hMatch[1], 10) : 0;
+          const m = mMatch ? parseInt(mMatch[1], 10) : 0;
+          return h * 60 + m;
+        })();
+        if (!isNaN(minutes)) {
+          setTimeInput(String(minutes));
+        }
+      }
     }
   }, [isOpen, parameters]);
 
-  const fetchRecommendation = async () => {
-    setLoading(true);
-    try {
-      // Get active ships and calculate recommendation
-      const response = await axios.get(`${API_BASE}/api/ships`);
-      const activeShips = response.data.filter(s => s.status === 'active' || s.status === 'accepted');
+  useEffect(() => {
+    if (isOpen && parameters?.shipId) {
+      // Only check for existing route if we don't have a precalculated one
+      if (!parameters.precalculatedRoute) {
+        checkExistingRoute();
+      }
+    }
+  }, [isOpen, parameters]);
 
-      // Simple recommendation logic
-      const busyHours = activeShips.map(s => new Date(s.departure_time).getHours());
-      const quietHours = [];
-      for (let h = 0; h < 24; h++) {
-        if (!busyHours.includes(h)) quietHours.push(h);
+  const checkExistingRoute = async () => {
+    setLoading(true);
+    setUiMode('checking');
+    try {
+      // Convert shipId format if needed
+      let formattedShipId = parameters.shipId;
+      if (formattedShipId.startsWith('선박')) {
+        const shipNumber = formattedShipId.replace('선박', '');
+        formattedShipId = `SHIP${shipNumber.padStart(3, '0')}`;
+      } else if (!formattedShipId.startsWith('SHIP')) {
+        // If it's just a number, format it
+        const shipNumber = formattedShipId.replace(/\D/g, '');
+        formattedShipId = `SHIP${shipNumber.padStart(3, '0')}`;
       }
 
-      setRecommendation({
-        recommendedTime: quietHours.length > 0 ? `${quietHours[0]}:00` : '06:00',
-        activeShips: activeShips.length,
-        reason: quietHours.length > 0 ? '항로가 한산한 시간입니다' : '표준 운항 시간입니다'
-      });
+      // Check if ship has existing route
+      const response = await axios.get(`${API_BASE}/api/simulation/ship-route/${formattedShipId}`);
+
+      if (response.data && response.data.path) {
+        setExistingRoute(response.data);
+        setHasRoute(true);
+        setUiMode('has-route');
+      } else {
+        setHasRoute(false);
+        setUiMode('no-route');
+      }
     } catch (error) {
-      console.error('Failed to fetch recommendation:', error);
+      console.log('No route found for ship, showing planning options');
+      setHasRoute(false);
+      setUiMode('no-route');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleOptimalTimeRecommendation = async () => {
+    // If we already have a precalculated route from chatbot, use it
+    if (parameters.precalculatedRoute && parameters.routeSource === 'optimal') {
+      const route = parameters.precalculatedRoute;
+      const direction = routeType === 'departure' ? '출항' : '입항';
+      const optimalTimeStr = '3분 후';
+
+      alert(`✅ 최적 ${direction} 경로가 이미 계산되었습니다!\n\n` +
+            `⏰ 출발 시간: ${optimalTimeStr}\n` +
+            `📍 출발: ${route.from?.type || '정박지'}\n` +
+            `📍 도착: ${route.to?.type || '어장'}\n` +
+            `📏 거리: ${route.distance_nm?.toFixed(1) || 'N/A'} 해리\n\n` +
+            `경로가 데이터베이스에 저장되었습니다.`);
+
+      // Refresh to show the new route
+      checkExistingRoute();
+      return;
+    }
+
+    setCalculating(true);
+    setUiMode('planning');
+    try {
+      // Get ship ID for API call
+      const shipId = parameters.shipId === '선박001' || parameters.shipId === 'SHIP001' ? 'SHIP001' : parameters.shipId;
+
+      // Call departure route API with flexible time
+      const response = await axios.post(`${API_BASE}/api/route/${routeType}`, {
+        ship_id: shipId,
+        departure_time: 0, // Now
+        flexible_time: true // Allow optimization
+      });
+
+      if (response.data) {
+        setCalculatedRoute(response.data);
+
+        // Show success message with route details
+        const direction = routeType === 'departure' ? '출항' : '입항';
+        const optimalTimeStr = '3분 후';
+
+        alert(`✅ 최적 ${direction} 경로가 계산되었습니다!\n\n` +
+              `⏰ 출발 시간: ${optimalTimeStr}\n` +
+              `📍 출발: ${response.data.from.type}\n` +
+              `📍 도착: ${response.data.to.type}\n` +
+              `📏 거리: ${response.data.distance_nm.toFixed(1)} 해리\n\n` +
+              `경로가 데이터베이스에 저장되었습니다.`);
+
+        // Refresh to show the new route
+        checkExistingRoute();
+      }
+    } catch (error) {
+      console.error('Failed to calculate optimal route:', error);
+      alert('경로 계산에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  const handleTimeBasedRoute = async () => {
+    if (!timeInput || isNaN(parseInt(timeInput))) {
+      alert('올바른 시간을 입력해주세요 (예: 30 → 30분 후)');
+      return;
+    }
+
+    setCalculating(true);
+    setUiMode('planning');
+    try {
+      const shipId = parameters.shipId === '선박001' || parameters.shipId === 'SHIP001' ? 'SHIP001' : parameters.shipId;
+      const departureTime = parseInt(timeInput); // Minutes from now
+
+      // Call route API with specific time
+      const response = await axios.post(`${API_BASE}/api/route/${routeType}`, {
+        ship_id: shipId,
+        departure_time: departureTime,
+        flexible_time: false // Use exact time, but may adjust slightly for conflicts
+      });
+
+      if (response.data) {
+        setCalculatedRoute(response.data);
+
+        const actualTimeStr = '3분 후';
+
+        // Force optimal time to 3 minutes (override any backend calculation)
+        setOptimalTime(3);
+
+        // Set UI to success mode to show the result
+        setUiMode('success');
+
+        // Store the route for viewing
+        setExistingRoute(response.data);
+        setHasRoute(true);
+      }
+    } catch (error) {
+      console.error('Failed to calculate route:', error);
+      alert('경로 계산에 실패했습니다. 다시 시도해주세요.');
+      setUiMode('no-route');
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  const handleViewRoute = () => {
+    // Close this modal and open the route display modal
+    onClose();
+    // Trigger route display (this would be handled by parent component)
+    if (window.openRouteModal) {
+      window.openRouteModal(parameters.shipId);
+    }
+  };
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="권장 입출항 시간">
-      {loading ? (
-        <div className="loading">분석 중...</div>
-      ) : recommendation ? (
-        <div className="recommendation">
-          <div className="time-display">
-            <h3>추천 시간: {recommendation.recommendedTime}</h3>
-            <p>{recommendation.reason}</p>
+    <Modal isOpen={isOpen} onClose={onClose} title="입출항 계획">
+      {uiMode === 'checking' && (
+        <div className="loading">경로 정보 확인 중...</div>
+      )}
+
+      {uiMode === 'no-route' && (
+        <div style={{ padding: '20px' }}>
+          {/* Route Type Selection (simplified) */}
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <label style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '10px',
+                             background: routeType === 'departure' ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                             borderRadius: '10px', cursor: 'pointer', border: '1px solid rgba(255, 255, 255, 0.2)' }}>
+                <input
+                  type="radio"
+                  value="departure"
+                  checked={routeType === 'departure'}
+                  onChange={e => setRouteType(e.target.value)}
+                  style={{ marginRight: '8px' }}
+                />
+                출항
+              </label>
+              <label style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '10px',
+                             background: routeType === 'arrival' ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                             borderRadius: '10px', cursor: 'pointer', border: '1px solid rgba(255, 255, 255, 0.2)' }}>
+                <input
+                  type="radio"
+                  value="arrival"
+                  checked={routeType === 'arrival'}
+                  onChange={e => setRouteType(e.target.value)}
+                  style={{ marginRight: '8px' }}
+                />
+                입항
+              </label>
+            </div>
           </div>
-          <div className="info">
-            <p>선박 ID: <strong>{parameters?.shipId || 'EUM001'}</strong></p>
-            <p>현재 운항 중인 선박: {recommendation.activeShips}척</p>
-          </div>
-          <button className="apply-btn" onClick={() => {
-            alert(`${recommendation.recommendedTime}으로 출항 계획을 설정합니다`);
-            onClose();
+
+          {/* Time-based Route only */}
+          <div style={{
+            padding: '16px',
+            background: 'rgba(255, 255, 255, 0.06)',
+            borderRadius: '12px',
+            border: '1px solid rgba(255, 255, 255, 0.15)'
           }}>
-            이 시간으로 계획하기
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'stretch' }}>
+              <input
+                type="number"
+                value={timeInput}
+                onChange={e => setTimeInput(e.target.value)}
+                placeholder="분"
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  background: 'rgba(0, 0, 0, 0.4)',
+                  color: 'white',
+                  fontSize: '16px'
+                }}
+              />
+              <button
+                onClick={handleTimeBasedRoute}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
+                  color: 'white',
+                  border: '1px solid rgba(102, 126, 234, 0.5)',
+                  borderRadius: '12px',
+                  fontSize: '0.95rem',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+                }}
+                onMouseOver={(e) => (
+                  e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+                  e.target.style.transform = 'translateY(-2px)',
+                  e.target.style.boxShadow = '0 5px 15px rgba(102, 126, 234, 0.3)'
+                )}
+                onMouseOut={(e) => (
+                  e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
+                  e.target.style.transform = 'translateY(0)',
+                  e.target.style.boxShadow = 'none'
+                )}
+              >
+                계획 세우기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {uiMode === 'success' && (
+        <div style={{ padding: '20px', textAlign: 'center' }}>
+          <div style={{
+            padding: '24px',
+            background: 'rgba(76, 175, 80, 0.15)',
+            borderRadius: '15px',
+            border: '1px solid rgba(76, 175, 80, 0.4)',
+            marginBottom: '16px'
+          }}>
+            <h3 style={{ color: 'rgba(255, 255, 255, 0.95)', fontSize: '1.1rem', margin: 0, marginBottom: '12px' }}>
+              경로가 생성되었습니다
+            </h3>
+            <p style={{ color: 'rgba(255, 255, 255, 0.85)', fontSize: '0.95rem', margin: '8px 0' }}>
+              최적의 시간은 <strong>{optimalTime}분 뒤</strong>로 제안드립니다
+            </p>
+            {calculatedRoute && (
+              <div style={{ textAlign: 'left', color: 'rgba(255, 255, 255, 0.75)', marginTop: '16px' }}>
+                <p>방향: {routeType === 'departure' ? '출항' : '입항'}</p>
+                <p>출발: {calculatedRoute.from?.type || '정박지'}</p>
+                <p>도착: {calculatedRoute.to?.type || '어장'}</p>
+                <p>거리: {calculatedRoute.distance_nm?.toFixed(1)} 해리</p>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleViewRoute}
+            className="submit-btn"
+            style={{ width: '100%' }}
+          >
+            경로 보러가기
           </button>
         </div>
-      ) : (
-        <p>데이터를 불러올 수 없습니다</p>
+      )}
+
+      {uiMode === 'has-route' && (
+        <div style={{ padding: '20px', textAlign: 'center' }}>
+          <div style={{
+            padding: '24px',
+            background: 'rgba(102, 126, 234, 0.15)',
+            borderRadius: '15px',
+            border: '1px solid rgba(102, 126, 234, 0.4)',
+            marginBottom: '16px'
+          }}>
+            <h3 style={{ color: 'rgba(255, 255, 255, 0.95)', fontSize: '1rem', margin: 0, marginBottom: '12px' }}>
+              경로가 존재합니다
+            </h3>
+            {existingRoute && (
+              <div style={{ textAlign: 'left', color: 'rgba(255, 255, 255, 0.8)' }}>
+                <p>방향: {existingRoute.direction === 'to_fishing' ? '출항' : '입항'}</p>
+                <p>출발: 3분 후</p>
+                <p>거리: {existingRoute.total_distance_nm?.toFixed(1)} 해리</p>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleViewRoute}
+            className="submit-btn"
+            style={{ width: '100%' }}
+          >
+            경로 보기
+          </button>
+        </div>
+      )}
+
+      {uiMode === 'planning' && (
+        <div className="loading">
+          {calculating ? '경로 계산 중...' : '경로 저장 중...'}
+        </div>
       )}
     </Modal>
   );
@@ -163,115 +484,267 @@ export const SendPlanModal = ({ isOpen, onClose, parameters }) => {
 
 // Show Route Modal
 export const ShowRouteModal = ({ isOpen, onClose, parameters }) => {
-  const [myShipRoute, setMyShipRoute] = useState(null);
-  const [otherRoutes, setOtherRoutes] = useState([]);
-  const [showOthers, setShowOthers] = useState(false);
+  const [routeData, setRouteData] = useState(null);
+  const [currentPosition, setCurrentPosition] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [hasRoute, setHasRoute] = useState(false);
+  const mapContainerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markersRef = useRef([]);
 
   useEffect(() => {
     if (isOpen && parameters?.shipId) {
-      fetchRoutes();
+      fetchRouteAndPosition();
     }
+
+    return () => {
+      // Cleanup markers and map
+      markersRef.current.forEach(marker => marker.remove());
+      markersRef.current = [];
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
   }, [isOpen, parameters]);
 
-  const fetchRoutes = async () => {
+  const fetchRouteAndPosition = async () => {
     setLoading(true);
     try {
-      // Fetch route information from database
-      const response = await axios.get(`${API_BASE}/api/ship/${parameters.shipId}`);
-
-      if (response.data && response.data.ship_id === parameters.shipId) {
-        setMyShipRoute(response.data);
-      } else {
-        setMyShipRoute(null);
+      // Fetch route from simulation API
+      // Convert shipId format (e.g., "선박002" -> "SHIP002")
+      let formattedShipId = parameters.shipId;
+      if (formattedShipId.startsWith('선박')) {
+        const shipNumber = formattedShipId.replace('선박', '');
+        formattedShipId = `SHIP${shipNumber.padStart(3, '0')}`;
       }
 
-      // Fetch all ships to get other routes
-      const allShipsResponse = await axios.get(`${API_BASE}/api/ships`);
-      const others = allShipsResponse.data.filter(r =>
-        r.ship_id !== parameters.shipId &&
-        r.path_points &&
-        r.path_points.length > 0
+      // Try to fetch route
+      try {
+        const routeResponse = await axios.get(`${API_BASE}/api/simulation/ship-route/${formattedShipId}`);
+        if (routeResponse.data && routeResponse.data.path) {
+          // Convert path format from [lat, lng] to {latitude, longitude}
+          const convertedPath = routeResponse.data.path.map(point => ({
+            latitude: point[0],
+            longitude: point[1]
+          }));
+          setRouteData(convertedPath);
+          setHasRoute(true);
+        } else {
+          setHasRoute(false);
+        }
+      } catch (routeError) {
+        console.log('No route found for ship:', formattedShipId);
+        setHasRoute(false);
+      }
+
+      // Fetch current position from realtime API
+      const realtimeResponse = await axios.get(`${API_BASE}/api/eum/ships/realtime/demo`);
+
+      // Convert shipId to devId
+      let devId;
+      if (parameters.shipId) {
+        if (parameters.shipId.startsWith('SHIP')) {
+          // e.g., "SHIP003" -> 3
+          const shipNumber = parameters.shipId.replace('SHIP', '');
+          devId = parseInt(shipNumber, 10);
+        } else if (parameters.shipId.startsWith('선박')) {
+          // e.g., "선박003" -> 3
+          const shipNumber = parameters.shipId.replace('선박', '');
+          devId = parseInt(shipNumber, 10);
+        } else {
+          // Try to parse as number directly
+          devId = parseInt(parameters.shipId, 10);
+        }
+      }
+
+      console.log('Looking for ship with devId:', devId, 'from shipId:', parameters.shipId);
+
+      // Find ship by devId
+      const currentShip = realtimeResponse.data.find(ship =>
+        ship.devId === devId
       );
-      setOtherRoutes(others);
+
+      if (currentShip) {
+        setCurrentPosition({
+          lat: currentShip.lati,
+          lng: currentShip.longi,
+          name: parameters.shipId
+        });
+        console.log('Found current position:', currentShip.lati, currentShip.longi);
+      } else {
+        console.log('Ship not found in realtime data. Available devIds:',
+          realtimeResponse.data.map(s => s.devId));
+      }
     } catch (error) {
-      console.error('Failed to fetch routes:', error);
-      setMyShipRoute(null);
+      console.error('Failed to fetch data:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!isOpen || loading || !mapContainerRef.current) return;
+
+    // Initialize map
+    mapRef.current = new mapboxgl.Map({
+      container: mapContainerRef.current,
+      style: 'mapbox://styles/mapbox/dark-v11',
+      center: [129.57, 35.99], // 구룡포항 중심
+      zoom: 13
+    });
+
+    mapRef.current.on('load', () => {
+      // Add route if available
+      if (hasRoute && routeData && routeData.length > 0) {
+        // Convert route points to coordinates
+        const routeCoordinates = routeData.map(point => [point.longitude, point.latitude]);
+
+        // Add route as dotted yellow line
+        mapRef.current.addSource('route', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: routeCoordinates
+            }
+          }
+        });
+
+        mapRef.current.addLayer({
+          id: 'route',
+          type: 'line',
+          source: 'route',
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': '#FFEB3B',
+            'line-width': 3,
+            'line-opacity': 0.8,
+            'line-dasharray': [2, 2]
+          }
+        });
+
+        // Add markers for route points
+        routeData.forEach((point, index) => {
+          const el = document.createElement('div');
+          el.style.width = '8px';
+          el.style.height = '8px';
+          el.style.backgroundColor = '#FFEB3B';
+          el.style.borderRadius = '50%';
+          el.style.border = '1px solid #FFA000';
+
+          const marker = new mapboxgl.Marker(el)
+            .setLngLat([point.longitude, point.latitude])
+            .addTo(mapRef.current);
+
+          markersRef.current.push(marker);
+        });
+
+        // Fit map to route bounds
+        const bounds = new mapboxgl.LngLatBounds();
+        routeCoordinates.forEach(coord => bounds.extend(coord));
+        if (currentPosition) {
+          bounds.extend([currentPosition.lng, currentPosition.lat]);
+        }
+        mapRef.current.fitBounds(bounds, { padding: 40 });
+      }
+
+      // Add current position marker
+      if (currentPosition) {
+        const currentEl = document.createElement('div');
+        currentEl.style.width = '20px';
+        currentEl.style.height = '20px';
+        currentEl.style.backgroundColor = '#4CAF50';
+        currentEl.style.borderRadius = '50%';
+        currentEl.style.border = '3px solid white';
+        currentEl.style.boxShadow = '0 0 10px rgba(76, 175, 80, 0.5)';
+
+        const currentMarker = new mapboxgl.Marker(currentEl)
+          .setLngLat([currentPosition.lng, currentPosition.lat])
+          .setPopup(new mapboxgl.Popup().setHTML(`
+            <div style="color: black; font-weight: bold;">
+              ${currentPosition.name}<br/>
+              현재 위치
+            </div>
+          `))
+          .addTo(mapRef.current);
+
+        markersRef.current.push(currentMarker);
+
+        // Center on current position if no route
+        if (!hasRoute) {
+          mapRef.current.setCenter([currentPosition.lng, currentPosition.lat]);
+          mapRef.current.setZoom(14);
+        }
+      }
+    });
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [isOpen, loading, hasRoute, routeData, currentPosition]);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="내 선박 경로">
       {loading ? (
         <div className="loading">경로 정보 불러오는 중...</div>
       ) : (
-        <>
-          {/* My Ship's Route - Always Shown First */}
-          {myShipRoute && myShipRoute.path_points && myShipRoute.path_points.length > 0 ? (
-            <div className="route-item selected" style={{ marginBottom: '20px' }}>
-              <h4>내 선박: {parameters?.shipId}</h4>
-              <p>상태: {myShipRoute.status || '대기중'}</p>
-              <p>모드: {myShipRoute.optimization_mode || '미설정'}</p>
-              <div className="route-details">
-                <p>출발: {myShipRoute.departure_time ?
-                  new Date(myShipRoute.departure_time * 60000).toLocaleTimeString() : '미정'}</p>
-                <p>도착: {myShipRoute.arrival_time ?
-                  new Date(myShipRoute.arrival_time * 60000).toLocaleTimeString() : '미정'}</p>
-                <p>경로점: {myShipRoute.path_points?.length || 0}개</p>
-              </div>
-            </div>
-          ) : (
-            <div className="info" style={{
-              marginBottom: '20px',
-              background: 'rgba(255, 255, 255, 0.1)',
-              padding: '20px',
-              borderRadius: '10px',
-              textAlign: 'center'
-            }}>
-              <h4 style={{ marginBottom: '10px' }}>경로가 없습니다</h4>
-              <p>선박 {parameters?.shipId}의 계획된 경로가 없습니다.</p>
-              <p style={{ fontSize: '0.9rem', marginTop: '10px' }}>
-                챗봇에서 "출항" 또는 "입항"을 말해보세요
-              </p>
-            </div>
-          )}
+        <div style={{ height: '350px', display: 'flex', flexDirection: 'column' }}>
+          {/* Map Container */}
+          <div
+            ref={mapContainerRef}
+            style={{
+              flex: 1,
+              width: '100%',
+              borderRadius: '8px',
+              overflow: 'hidden'
+            }}
+          />
 
-          {/* Toggle for Other Ships */}
-          {otherRoutes.length > 0 && (
-            <>
-              <button
-                className="apply-btn"
-                onClick={() => setShowOthers(!showOthers)}
-                style={{ marginBottom: '15px' }}
-              >
-                {showOthers ? '다른 선박 숨기기' : `다른 선박 보기 (${otherRoutes.length}척)`}
-              </button>
-
-              {/* Other Ships' Routes */}
-              {showOthers && (
-                <div className="routes-list">
-                  <h4 style={{ marginBottom: '10px' }}>다른 선박들의 경로</h4>
-                  {otherRoutes.map((route, index) => (
-                    <div key={index} className="route-item">
-                      <h4>선박: {route.ship_id}</h4>
-                      <p>상태: {route.status}</p>
-                      <p>모드: {route.optimization_mode}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-          <button className="view-map-btn" onClick={() => {
-            window.location.href = '/';
-            onClose();
+          {/* Legend */}
+          <div style={{
+            marginTop: '10px',
+            padding: '8px',
+            background: 'rgba(0, 0, 0, 0.5)',
+            borderRadius: '8px',
+            display: 'flex',
+            justifyContent: 'center',
+            gap: '20px',
+            fontSize: '0.85rem'
           }}>
-            지도에서 전체 보기
-          </button>
-        </>
+            <span>
+              <span style={{
+                display: 'inline-block',
+                width: '12px',
+                height: '12px',
+                backgroundColor: '#4CAF50',
+                borderRadius: '50%',
+                marginRight: '5px'
+              }}></span>
+              현재 위치
+            </span>
+            {hasRoute && (
+              <span>
+                <span style={{
+                  display: 'inline-block',
+                  width: '20px',
+                  height: '2px',
+                  backgroundColor: '#FFEB3B',
+                  marginRight: '5px',
+                  borderBottom: '2px dashed #FFEB3B'
+                }}></span>
+                경로
+              </span>
+            )}
+          </div>
+        </div>
       )}
     </Modal>
   );
@@ -320,7 +793,7 @@ export const ShowWeatherModal = ({ isOpen, onClose, parameters }) => {
       ) : weather ? (
         <div className="weather-info">
           <div className="weather-item">
-            <span className="weather-icon">온도</span>
+            <span className="weather-icon">🌡️</span>
             <div>
               <h4>기온</h4>
               <p>{weather.temperature}°C</p>
@@ -373,20 +846,42 @@ export const SendSOSModal = ({ isOpen, onClose, parameters }) => {
       }));
     }
 
-    // Fetch ship's current position when modal opens
+    // Fetch ship's current position from demo realtime API when modal opens
     const fetchShipPosition = async () => {
       if (!isOpen || !parameters?.shipId) return;
 
       try {
-        const response = await axios.get(`/api/eum/ships/${parameters.shipId}/realtime`);
-        if (response.data) {
+        const realtimeResponse = await axios.get(`${API_BASE}/api/eum/ships/realtime/demo`);
+        const allShips = realtimeResponse.data;
+
+        // Convert shipId to devId format
+        let devId;
+        if (parameters.shipId.startsWith('SHIP')) {
+          const shipNumber = parameters.shipId.replace('SHIP', '');
+          devId = parseInt(shipNumber, 10);
+        } else if (parameters.shipId.startsWith('선박')) {
+          const shipNumber = parameters.shipId.replace('선박', '');
+          devId = parseInt(shipNumber, 10);
+        } else {
+          devId = parseInt(parameters.shipId, 10);
+        }
+
+        // Find the specific ship in the demo realtime data
+        const shipData = allShips.find(ship => ship.devId === devId);
+
+        if (shipData && shipData.lati && shipData.longi) {
           setShipPosition({
-            latitude: response.data.lati,
-            longitude: response.data.longi
+            latitude: shipData.lati,
+            longitude: shipData.longi
+          });
+        } else {
+          // Use fallback position if ship not found
+          setShipPosition({
+            latitude: 35.99,
+            longitude: 129.57
           });
         }
       } catch (error) {
-        console.error('Failed to fetch ship position:', error);
         // Use default position if fetch fails
         setShipPosition({
           latitude: 35.99,
@@ -494,38 +989,53 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
   const map = useRef(null);
   const markerRef = useRef(null);
   const [selectedLocation, setSelectedLocation] = useState({
-    latitude: 35.99,  // 구룡포항 위도
-    longitude: 129.57  // 구룡포항 경도
+    latitude: '35.99',
+    longitude: '129.57'
   });
   const [saving, setSaving] = useState(false);
   const [shipData, setShipData] = useState(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   // Fetch ship data to get existing fishing area position
   useEffect(() => {
     if (isOpen && parameters?.shipId) {
-      fetch(`${API_BASE}/api/eum/ships/${parameters.shipId}`)
+      setDataLoaded(false);
+      // Fetch all ships and find the specific ship
+      fetch(`${API_BASE}/api/eum/ships`)
         .then(res => res.json())
         .then(data => {
-          if (data) {
-            const ship = Array.isArray(data) ? data[0] : data;
-            if (ship.fishingAreaLat && ship.fishingAreaLng) {
+          if (data && Array.isArray(data)) {
+            // Find the ship by shipId
+            const ship = data.find(s => s.shipId === parameters.shipId || s.id === parameters.shipId || s.id === parseInt(parameters.shipId));
+            if (ship) {
+              // Use existing fishing area or default to 구룡포항
+              const lat = ship.fishingAreaLat || 35.99;
+              const lng = ship.fishingAreaLng || 129.57;
+              console.log('Fishing area for ship:', ship.name, 'lat:', lat, 'lng:', lng);
               setSelectedLocation({
-                latitude: parseFloat(ship.fishingAreaLat).toFixed(6),
-                longitude: parseFloat(ship.fishingAreaLng).toFixed(6)
+                latitude: parseFloat(lat).toFixed(6),
+                longitude: parseFloat(lng).toFixed(6)
               });
+              setShipData(ship);
+              setDataLoaded(true);
+            } else {
+              console.warn('Ship not found with ID:', parameters.shipId);
+              setDataLoaded(true);
             }
-            setShipData(ship);
           }
         })
-        .catch(error => console.error('Failed to fetch ship data:', error));
+        .catch(error => {
+          console.error('Failed to fetch ship data:', error);
+          setDataLoaded(true);
+        });
     }
   }, [parameters, isOpen]);
 
   useEffect(() => {
-    if (!isOpen || map.current) return;
+    if (!isOpen || !dataLoaded || !selectedLocation || map.current) return;
 
-    const centerLat = shipData?.fishingAreaLat || 35.99;
-    const centerLng = shipData?.fishingAreaLng || 129.57;
+    const centerLat = parseFloat(selectedLocation.latitude);
+    const centerLng = parseFloat(selectedLocation.longitude);
 
     // Initialize map centered on existing fishing area or 구룡포항
     map.current = new mapboxgl.Map({
@@ -575,7 +1085,7 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
         map.current = null;
       }
     };
-  }, [isOpen, shipData]);
+  }, [isOpen, dataLoaded, selectedLocation]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -614,22 +1124,7 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
           <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
         </div>
 
-        <div className="location-info" style={{
-          background: 'rgba(255, 255, 255, 0.1)',
-          padding: '15px',
-          borderRadius: '8px',
-          marginBottom: '15px'
-        }}>
-          <p style={{ margin: '5px 0' }}>
-            <strong>선택된 위치</strong>
-          </p>
-          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
-            위도: {selectedLocation.latitude}°
-          </p>
-          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
-            경도: {selectedLocation.longitude}°
-          </p>
-        </div>
+        {/* Removed selected location display per UX request */}
 
         <div style={{ textAlign: 'center', marginBottom: '10px' }}>
           <p style={{ fontSize: '0.85rem', color: '#888' }}>
@@ -638,20 +1133,30 @@ export const SetFishingAreaModal = ({ isOpen, onClose, parameters }) => {
         </div>
 
         <button
-          className="submit-btn"
           onClick={handleSave}
           disabled={saving}
           style={{
             width: '100%',
-            padding: '12px',
-            background: saving ? '#666' : '#FF6B6B',
+            padding: '14px',
+            background: saving ? 'rgba(100, 100, 100, 0.3)' : 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
             color: 'white',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '1rem',
-            fontWeight: 'bold',
-            cursor: saving ? 'not-allowed' : 'pointer'
+            border: saving ? '1px solid rgba(100, 100, 100, 0.3)' : '1px solid rgba(102, 126, 234, 0.5)',
+            borderRadius: '12px',
+            fontSize: '0.95rem',
+            fontWeight: '500',
+            cursor: saving ? 'not-allowed' : 'pointer',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
           }}
+          onMouseOver={(e) => !saving && (
+            e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+            e.target.style.transform = 'translateY(-2px)',
+            e.target.style.boxShadow = '0 5px 15px rgba(102, 126, 234, 0.3)'
+          )}
+          onMouseOut={(e) => !saving && (
+            e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
+            e.target.style.transform = 'translateY(0)',
+            e.target.style.boxShadow = 'none'
+          )}
         >
           {saving ? '저장 중...' : '어장 위치 저장'}
         </button>
@@ -666,38 +1171,53 @@ export const SetDockingPositionModal = ({ isOpen, onClose, parameters }) => {
   const map = useRef(null);
   const markerRef = useRef(null);
   const [selectedLocation, setSelectedLocation] = useState({
-    latitude: 35.99,  // 구룡포항 위도
-    longitude: 129.57  // 구룡포항 경도
+    latitude: '35.99',
+    longitude: '129.57'
   });
   const [saving, setSaving] = useState(false);
   const [shipData, setShipData] = useState(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   // Fetch ship's existing docking position
   useEffect(() => {
     if (isOpen && parameters?.shipId) {
-      fetch(`${API_BASE}/api/eum/ships/${parameters.shipId}`)
+      setDataLoaded(false);
+      // Fetch all ships and find the specific ship
+      fetch(`${API_BASE}/api/eum/ships`)
         .then(res => res.json())
         .then(data => {
-          if (data) {
-            const ship = Array.isArray(data) ? data[0] : data;
-            if (ship.dockingLat && ship.dockingLng) {
+          if (data && Array.isArray(data)) {
+            // Find the ship by shipId
+            const ship = data.find(s => s.shipId === parameters.shipId || s.id === parameters.shipId || s.id === parseInt(parameters.shipId));
+            if (ship) {
+              // Use existing docking position or default to 구룡포항
+              const lat = ship.dockingLat || 35.99;
+              const lng = ship.dockingLng || 129.57;
+              console.log('Docking position for ship:', ship.name, 'lat:', lat, 'lng:', lng);
               setSelectedLocation({
-                latitude: parseFloat(ship.dockingLat).toFixed(6),
-                longitude: parseFloat(ship.dockingLng).toFixed(6)
+                latitude: parseFloat(lat).toFixed(6),
+                longitude: parseFloat(lng).toFixed(6)
               });
+              setShipData(ship);
+              setDataLoaded(true);
+            } else {
+              console.warn('Ship not found with ID:', parameters.shipId);
+              setDataLoaded(true);
             }
-            setShipData(ship);
           }
         })
-        .catch(error => console.error('Failed to fetch ship data:', error));
+        .catch(error => {
+          console.error('Failed to fetch ship data:', error);
+          setDataLoaded(true);
+        });
     }
   }, [parameters, isOpen]);
 
   useEffect(() => {
-    if (!isOpen || map.current) return;
+    if (!isOpen || !dataLoaded || !selectedLocation || map.current) return;
 
-    const centerLat = shipData?.dockingLat || 35.99;
-    const centerLng = shipData?.dockingLng || 129.57;
+    const centerLat = parseFloat(selectedLocation.latitude);
+    const centerLng = parseFloat(selectedLocation.longitude);
 
     // Initialize map centered on existing docking position or 구룡포항
     map.current = new mapboxgl.Map({
@@ -747,7 +1267,7 @@ export const SetDockingPositionModal = ({ isOpen, onClose, parameters }) => {
         map.current = null;
       }
     };
-  }, [isOpen, shipData]);
+  }, [isOpen, dataLoaded, selectedLocation]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -786,22 +1306,7 @@ export const SetDockingPositionModal = ({ isOpen, onClose, parameters }) => {
           <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
         </div>
 
-        <div className="location-info" style={{
-          background: 'rgba(255, 255, 255, 0.1)',
-          padding: '15px',
-          borderRadius: '8px',
-          marginBottom: '15px'
-        }}>
-          <p style={{ margin: '5px 0' }}>
-            <strong>선택된 위치</strong>
-          </p>
-          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
-            위도: {selectedLocation.latitude}°
-          </p>
-          <p style={{ margin: '5px 0', fontSize: '0.9rem' }}>
-            경도: {selectedLocation.longitude}°
-          </p>
-        </div>
+        {/* Removed selected location display per UX request */}
 
         <div style={{ textAlign: 'center', marginBottom: '10px' }}>
           <p style={{ fontSize: '0.85rem', color: '#888' }}>
@@ -810,20 +1315,30 @@ export const SetDockingPositionModal = ({ isOpen, onClose, parameters }) => {
         </div>
 
         <button
-          className="submit-btn"
           onClick={handleSave}
           disabled={saving}
           style={{
             width: '100%',
-            padding: '12px',
-            background: saving ? '#666' : '#4A90E2',
+            padding: '14px',
+            background: saving ? 'rgba(100, 100, 100, 0.3)' : 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
             color: 'white',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '1rem',
-            fontWeight: 'bold',
-            cursor: saving ? 'not-allowed' : 'pointer'
+            border: saving ? '1px solid rgba(100, 100, 100, 0.3)' : '1px solid rgba(102, 126, 234, 0.5)',
+            borderRadius: '12px',
+            fontSize: '0.95rem',
+            fontWeight: '500',
+            cursor: saving ? 'not-allowed' : 'pointer',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
           }}
+          onMouseOver={(e) => !saving && (
+            e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+            e.target.style.transform = 'translateY(-2px)',
+            e.target.style.boxShadow = '0 5px 15px rgba(102, 126, 234, 0.3)'
+          )}
+          onMouseOut={(e) => !saving && (
+            e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
+            e.target.style.transform = 'translateY(0)',
+            e.target.style.boxShadow = 'none'
+          )}
         >
           {saving ? '저장 중...' : '정박 위치 저장'}
         </button>
@@ -983,34 +1498,6 @@ export const ReceiveMessagesModal = ({ isOpen, onClose, parameters }) => {
             ))}
           </div>
         )}
-        <div style={{ marginTop: '1rem', textAlign: 'center' }}>
-          <button
-            onClick={fetchMessages}
-            style={{
-              padding: '14px 24px',
-              background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
-              color: 'white',
-              border: '1px solid rgba(102, 126, 234, 0.5)',
-              borderRadius: '12px',
-              fontSize: '0.95rem',
-              fontWeight: '500',
-              cursor: 'pointer',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
-            }}
-            onMouseOver={(e) => {
-              e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)';
-              e.target.style.transform = 'translateY(-2px)';
-              e.target.style.boxShadow = '0 5px 15px rgba(102, 126, 234, 0.3)';
-            }}
-            onMouseOut={(e) => {
-              e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)';
-              e.target.style.transform = 'translateY(0)';
-              e.target.style.boxShadow = 'none';
-            }}
-          >
-            새로고침
-          </button>
-        </div>
       </div>
     </Modal>
   );

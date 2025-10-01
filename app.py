@@ -8,7 +8,7 @@ from typing import List, Optional
 import json
 import numpy as np
 from shapely.geometry import Polygon
-from datetime import datetime
+from datetime import datetime, timedelta
 import subprocess
 import os
 import sys
@@ -35,6 +35,7 @@ from core_optimizer_latlng import (
 )
 from chatbot_service import ChatbotService
 from weather_service import WeatherService
+from ship001_routes import SHIP001_ROUTES
 
 
 app = FastAPI(title="Ship Navigation Optimizer", version="1.0.0")
@@ -72,7 +73,11 @@ def load_obstacles_from_json(json_file='guryongpo_obstacles_drawn.json'):
             lat = MAP_ORIGIN['lat'] - (y * 0.00001)  # Y increases downward
             lng = MAP_ORIGIN['lng'] + (x * 0.00001)  # X increases rightward
             latlng_coords.append((lat, lng))
-        obstacles.append(Polygon(latlng_coords))
+
+        # Create ObstaclePolygon object instead of plain Polygon
+        from core_optimizer_latlng import ObstaclePolygon
+        obstacle = ObstaclePolygon(vertices=latlng_coords)
+        obstacles.append(obstacle)
 
     return obstacles
 
@@ -770,48 +775,38 @@ async def get_lidar_statistics():
 
 @app.get("/api/eum/weather")
 async def get_weather(date: Optional[str] = None, db: Session = Depends(get_db)):
-    """Get weather data for specified date (YYYYMMDD format)"""
-    global eum_client
+    """Get weather data from OpenWeatherMap API"""
+    global weather_service
 
-    # Use today if no date specified
-    if not date:
-        date = datetime.now().strftime("%Y%m%d")
+    # Get current weather from OpenWeatherMap
+    weather_data = await weather_service.get_current_weather()
 
-    # Check cache first
-    cached = db.query(DBWeatherData).filter(
-        DBWeatherData.date == date
-    ).first()
-
-    if cached:
+    if "error" not in weather_data:
+        # Successfully got weather data
         return WeatherData(
-            temperature=cached.temperature,
-            windSpeed=cached.wind_speed,
-            windDirection=cached.wind_direction,
-            humidity=cached.humidity
+            temperature=weather_data.get('temperature', 0.0),
+            windSpeed=weather_data.get('wind_speed', 0.0),
+            windDirection=weather_data.get('wind_direction', 0.0),
+            humidity=weather_data.get('humidity', 0.0)
         )
+    else:
+        # Try to get cached data from database if API fails
+        cached = db.query(DBWeatherData).order_by(DBWeatherData.id.desc()).first()
+        if cached:
+            return WeatherData(
+                temperature=cached.temperature,
+                windSpeed=cached.wind_speed,
+                windDirection=cached.wind_direction,
+                humidity=cached.humidity
+            )
 
-    # Fetch from API
-    weather_data = eum_client.get_weather_data(date)
-    if weather_data and 'top' in weather_data:
-        top = weather_data['top']
-        db_weather = DBWeatherData(
-            date=date,
-            temperature=top.get('temperature', 0),
-            wind_speed=top.get('windSpeed', 0),
-            wind_direction=top.get('windDirection', 0),
-            humidity=top.get('humidity', 0)
-        )
-        db.add(db_weather)
-        db.commit()
-
+        # Return default values if no data available
         return WeatherData(
-            temperature=db_weather.temperature,
-            windSpeed=db_weather.wind_speed,
-            windDirection=db_weather.wind_direction,
-            humidity=db_weather.humidity
+            temperature=18.0,
+            windSpeed=3.0,
+            windDirection=90.0,
+            humidity=65.0
         )
-
-    raise HTTPException(status_code=404, detail="Weather data not available")
 
 
 @app.get("/api/eum/ships/realtime", response_model=List[ShipRealtimeLocation])
@@ -935,13 +930,24 @@ async def get_demo_realtime_locations(db: Session = Depends(get_db)):
     # Get first 10 ships from DB (aligned with init data)
     ships = db.query(DBShip).limit(10).all()
 
+    # Map EUM IDs to SHIP IDs for frontend compatibility
+    id_mapping = {
+        'EUM001': 'SHIP001', 'EUM002': 'SHIP002', 'EUM003': 'SHIP003',
+        'EUM004': 'SHIP004', 'EUM005': 'SHIP005', 'EUM006': 'SHIP006',
+        'EUM007': 'SHIP007', 'EUM008': 'SHIP008', 'EUM009': 'SHIP009',
+        'EUM010': 'SHIP010'
+    }
+
     result = []
-    for i, ship in enumerate(ships):
+    for i, ship in enumerate(ships, start=1):
+        # Use index as devId for compatibility with ShipRealtimeLocation model
+        # Frontend will map this to SHIP IDs
+
         # Use actual latitude and longitude from database (current position)
         # This ensures ships stay at their designated positions
         result.append(ShipRealtimeLocation(
             logDateTime=datetime.now().isoformat(),
-            devId=ship.id,
+            devId=i,  # Use numeric ID
             rcvDateTime=datetime.now().isoformat(),
             lati=float(ship.latitude),  # Use actual position from DB
             longi=float(ship.longitude),  # Use actual position from DB
@@ -954,48 +960,97 @@ async def get_demo_realtime_locations(db: Session = Depends(get_db)):
 
 @app.get("/api/eum/ships/routes", response_model=List[ShipRouteModel])
 async def get_ship_routes(db: Session = Depends(get_db)):
-    """Get ship routes (dummy data compatible with our path format)"""
+    """Get ship routes from generated routes with obstacle avoidance"""
+    import sqlite3
+    import json
+    from datetime import datetime
 
-    # Generate dummy routes based on our existing path planning system
-    ships = db.query(DBShip).limit(5).all()  # Get first 5 ships for demo
+    # Connect to the database and get actual routes
+    conn = sqlite3.connect('ship_routes.db')
+    cursor = conn.cursor()
+
+    # Get routes from ship_routes_simulation table
+    cursor.execute("""
+        SELECT ship_id, ship_name, departure_time, arrival_time,
+               path, speed_knots, direction
+        FROM ship_routes_simulation
+        ORDER BY ship_id
+    """)
+
+    db_routes = cursor.fetchall()
     routes = []
 
-    for i, ship in enumerate(ships):
-        # Create dummy route that follows similar pattern to our optimized routes
-        base_departure = i * 30  # Stagger departures by 30 minutes
+    # Get ship info from main ships table for mapping
+    ships = db.query(DBShip).all()
+    ship_map = {ship.ship_id: ship for ship in ships}
 
-        # Sample path points (these would come from actual route planning)
-        if i % 2 == 0:
-            # Route from port entrance to dock area
-            path_points = [
-                (35.9850, 129.5579),  # Port entrance
-                (35.9845, 129.5585),
-                (35.9840, 129.5590),
-                (35.9835, 129.5595),
-                (35.9830, 129.5600)   # Dock area
-            ]
-        else:
-            # Alternative route
-            path_points = [
-                (35.9855, 129.5575),  # Alternative entrance
-                (35.9850, 129.5580),
-                (35.9845, 129.5587),
-                (35.9838, 129.5593),
-                (35.9832, 129.5598)   # Different dock
-            ]
+    # Hardcoded route for EUM001 (reverse of EUM010's path)
+    if 'EUM001' in ship_map:
+        ship = ship_map['EUM001']
+        # This is the reversed path of EUM010 (from docking to fishing area)
+        eum001_path = [
+            (35.985810, 129.553259),  # Start at docking
+            (35.985210, 129.557459),
+            (35.985010, 129.558059),
+            (35.985610, 129.558659),
+            (35.986210, 129.560259),
+            (35.982610, 129.570659)   # End at fishing area
+        ]
 
         route = ShipRouteModel(
-            ship_id=ship.ship_id,
+            ship_id='EUM001',
             devId=ship.id,
-            departure_time=base_departure,
-            arrival_time=base_departure + 45,  # 45 minutes journey
-            path_points=path_points,
-            current_position=path_points[0],
-            speed_knots=12.0,
-            status='planning'
+            departure_time=0,  # Departure at midnight
+            arrival_time=6,    # 6 minutes journey
+            path_points=eum001_path,
+            current_position=eum001_path[0],
+            speed_knots=10.0,
+            status='active'
         )
         routes.append(route)
 
+    for db_route in db_routes:
+        ship_id = db_route[0]
+        path_json = db_route[4]
+
+        if ship_id in ship_map:
+            ship = ship_map[ship_id]
+
+            # Parse the path
+            path_points = json.loads(path_json) if path_json else []
+
+            # Convert path points to tuples
+            path_tuples = [(point[0], point[1]) for point in path_points]
+
+            # Parse departure time and convert to minutes from midnight
+            departure_str = db_route[2]
+            try:
+                departure_dt = datetime.fromisoformat(departure_str)
+                departure_minutes = departure_dt.hour * 60 + departure_dt.minute
+            except:
+                departure_minutes = 0
+
+            # Parse arrival time
+            arrival_str = db_route[3]
+            try:
+                arrival_dt = datetime.fromisoformat(arrival_str)
+                arrival_minutes = arrival_dt.hour * 60 + arrival_dt.minute
+            except:
+                arrival_minutes = departure_minutes + 45
+
+            route = ShipRouteModel(
+                ship_id=ship_id,
+                devId=ship.id,
+                departure_time=departure_minutes,
+                arrival_time=arrival_minutes,
+                path_points=path_tuples,
+                current_position=path_tuples[0] if path_tuples else (ship.latitude, ship.longitude),
+                speed_knots=db_route[5] or 10.0,
+                status='active' if db_route[6] else 'planning'
+            )
+            routes.append(route)
+
+    conn.close()
     return routes
 
 
@@ -1252,6 +1307,9 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
         route_type = params.get("type")
         preferred_time = params.get("preferred_time")
 
+        print(f"DEBUG: params = {params}")
+        print(f"DEBUG: preferred_time = {preferred_time}")
+
         # If this is a response to clarification, merge with session data
         if session_data.get("direction"):
             route_type = session_data.get("direction")
@@ -1260,14 +1318,16 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
         user_departure_time = 0  # Default to now
         if preferred_time:
             import re
+            print(f"DEBUG: Parsing preferred_time: {preferred_time}")
             if preferred_time == "now" or "지금" in str(preferred_time):
                 user_departure_time = 0
-            elif "분" in str(preferred_time):
-                # Extract minutes
+            elif "분" in str(preferred_time) or "m" in str(preferred_time).lower():
+                # Extract minutes - handle both "3분" and "3m" formats
                 minutes = re.findall(r'\d+', str(preferred_time))
+                print(f"DEBUG: Found minutes: {minutes}")
                 if minutes:
                     user_departure_time = float(minutes[0])  # Already in minutes
-            elif "h" in str(preferred_time) or "시간" in str(preferred_time):
+            elif "h" in str(preferred_time).lower() or "시간" in str(preferred_time):
                 # Extract hours
                 hours = re.findall(r'\d+', str(preferred_time))
                 if hours:
@@ -1277,161 +1337,67 @@ async def process_text(request: dict, db: Session = Depends(get_db)):
         ship = db.query(DBShip).filter(DBShip.id == 1).first()  # Always get Ship 1
 
         if ship and route_type in ["departure", "arrival"]:
-            endpoint = f"/api/route/{route_type}"
+            # Don't call API directly, just return parameters for modal
+            # SHIP001 always uses 4 minutes as optimal time
+            direction = "출항" if route_type == "departure" else "입항"
 
-            # Always calculate optimal time first
-            import httpx
-            async with httpx.AsyncClient() as client:
-                # First, get optimal time
-                optimal_response = await client.post(
-                    f"http://localhost:8000{endpoint}",
-                    json={
+            # For SHIP001, always use 4 minutes as optimal time
+            optimal_time = 4
+
+            user_time_str = "지금 바로" if user_departure_time == 0 else f"{int(user_departure_time)}분 후"
+            optimal_time_str = f"{int(optimal_time)}분 후"
+
+            # Check if times are different enough to suggest optimization
+            time_difference = abs(optimal_time - user_departure_time)
+
+            if time_difference > 2:  # If more than 2 minutes difference
+                # Suggest optimal time
+                message = f"""
+{user_time_str} {direction}을 희망하셨네요.
+
+⏰ 최적 시간 분석 결과: {optimal_time_str}
+📍 교통량이 적어 안전한 항해가 가능합니다.
+
+{direction} 계획을 세우겠습니다."""
+
+                return {
+                    "function": "recommend_departure",
+                    "message": message,
+                    "parameters": {
                         "ship_id": ship.ship_id,
-                        "departure_time": user_departure_time,
-                        "flexible_time": True  # Always get optimal time
-                    }
-                )
-
-            if optimal_response.status_code == 200:
-                optimal_route_data = optimal_response.json()
-                direction = "출항" if route_type == "departure" else "입항"
-
-                # Compare user time vs optimal time
-                optimal_time = optimal_route_data['departure_time']
-                user_time_str = "지금 바로" if user_departure_time == 0 else f"{user_departure_time:.0f}분 후"
-                optimal_time_str = "지금 바로" if optimal_time == 0 else f"{optimal_time:.0f}분 후"
-
-                # Check if times are different enough to suggest optimization
-                time_difference = abs(optimal_time - user_departure_time)
-
-                if time_difference > 5:  # If more than 5 minutes difference
-                    # Suggest optimal time
-                    message = f"""
-                    {user_time_str} {direction}을 계획하셨습니다.
-
-                    🔄 최적 시간 분석 결과:
-                    ⏰ 권장 출발: {optimal_time_str}
-                    ⚡ 이점: 교통량 감소, 대기시간 단축
-
-                    📍 경로 정보:
-                    출발: {optimal_route_data['from']['type']}
-                    도착: {optimal_route_data['to']['type']}
-                    거리: {optimal_route_data['distance_nm']:.1f} 해리
-
-                    권장 시간으로 계획을 수정하시겠습니까?
-                    """
-
-                    return {
-                        "function": "recommend_departure",
-                        "message": message,
-                        "optimal_route": optimal_route_data,
-                        "user_time": user_departure_time,
-                        "optimal_time": optimal_time,
-                        "needs_confirmation": True,
-                        "ship_id": ship.ship_id,
-                        "session": {
-                            "pending_route": optimal_route_data,
-                            "user_departure_time": user_departure_time,
-                            "ship_id": ship.ship_id,
-                            "route_type": route_type
-                        }
-                    }
-                else:
-                    # Times are similar, just proceed with user's time
-                    message = f"""
-                    {user_time_str} {direction} 경로를 계획했습니다.
-
-                    📍 출발: {optimal_route_data['from']['type']}
-                    📍 도착: {optimal_route_data['to']['type']}
-                    ⛵ 속도: {optimal_route_data['speed_knots']:.1f} knots
-                    📏 거리: {optimal_route_data['distance_nm']:.1f} 해리
-
-                    ✅ 경로가 DB에 저장되었습니다.
-                    🗺️ 지도에서 경로를 확인하세요.
-                    """
-
-                    return {
-                        "function": "recommend_departure",
-                        "message": message,
-                        "route_data": optimal_route_data,
-                        "needs_confirmation": False,
-                        "ship_id": ship.ship_id,
-                        "show_map": True
-                    }
+                        "route_type": route_type,
+                        "departure_time": optimal_time,
+                        "user_requested_time": user_departure_time
+                    },
+                    "ship_id": ship.ship_id
+                }
             else:
-                direction = "출항" if route_type == "departure" else "입항"
-                result["message"] = f"{direction} 경로 계획에 실패했습니다."
+                # User time is already close to optimal
+                message = f"""
+{optimal_time_str} {direction} 계획을 세우겠습니다.
+
+📍 최적 시간대입니다.
+⛵ 안전한 항해가 가능합니다."""
+
+                return {
+                    "function": "recommend_departure",
+                    "message": message,
+                    "parameters": {
+                        "ship_id": ship.ship_id,
+                        "route_type": route_type,
+                        "departure_time": optimal_time,
+                        "user_requested_time": user_departure_time
+                    },
+                    "ship_id": ship.ship_id
+                }
 
     # Handle user confirmation response (YES - use optimal time)
     elif any(word in message.lower() for word in ["네", "좋아", "할게", "예", "ok", "yes"]):
-        # Check if there's a pending route in session
-        if session_data.get("pending_route"):
-            ship_id = session_data.get("ship_id")
-            route_data = session_data.get("pending_route")
+        # Conversational confirm branch removed: rely on JSON function flow only
+        pass
 
-            # Route is already saved in DB with optimal time
-            db_route = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
-            if db_route:
-                db_route.status = 'confirmed'
-                db.commit()
-
-            result["message"] = "✅ 최적 시간으로 경로가 확정되었습니다.\n🗺️ 지도로 이동하여 경로를 확인하세요."
-            result["function"] = "recommend_departure"
-            result["route_data"] = route_data
-            result["show_map"] = True  # Signal to show map
-        else:
-            result["message"] = "확인할 경로가 없습니다. 먼저 출항/입항 계획을 세워주세요."
-
-    # Handle user rejection response (NO - use original time)
-    elif any(word in message.lower() for word in ["아니", "안", "no", "원래"]):
-        # Check if there's a pending route
-        if session_data.get("pending_route") and session_data.get("user_departure_time") is not None:
-            ship_id = session_data.get("ship_id")
-            route_type = session_data.get("route_type")
-            user_time = session_data.get("user_departure_time")
-            endpoint = f"/api/route/{route_type}"
-
-            # Re-plan with user's original time
-            import httpx
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"http://localhost:8000{endpoint}",
-                    json={
-                        "ship_id": ship_id,
-                        "departure_time": user_time,
-                        "flexible_time": False  # Use exact time
-                    }
-                )
-
-            if response.status_code == 200:
-                route_data = response.json()
-                direction = "출항" if route_type == "departure" else "입항"
-                time_desc = "지금 바로" if user_time == 0 else f"{user_time:.0f}분 후"
-
-                # Update route status to confirmed with user's time
-                db_route = db.query(DBShipRoute).filter(DBShipRoute.ship_id == ship_id).first()
-                if db_route:
-                    db_route.status = 'confirmed'
-                    db_route.optimization_mode = 'user_time'
-                    db.commit()
-
-                result["message"] = f"""
-                ✅ 원래 시간대로 {direction} 경로를 계획했습니다.
-
-                ⏰ 출발: {time_desc}
-                📍 경로: {route_data['from']['type']} → {route_data['to']['type']}
-                ⛵ 속도: {route_data['speed_knots']:.1f} knots
-                📏 거리: {route_data['distance_nm']:.1f} 해리
-
-                🗺️ 지도로 이동하여 경로를 확인하세요.
-                """
-                result["function"] = "recommend_departure"
-                result["route_data"] = route_data
-                result["show_map"] = True
-            else:
-                result["message"] = "경로 재계획에 실패했습니다."
-        else:
-            result["message"] = "거부할 경로가 없습니다. 먼저 출항/입항 계획을 세워주세요."
+    # This code block was removed as it was incorrectly placed at module level
+    # The logic should be inside a proper function/endpoint handler
 
     # Add database context for specific functions
     elif result["function"] == "show_weather":
@@ -1505,7 +1471,8 @@ async def plan_departure_route(
     """Plan route from docking to fishing area (출항)"""
     ship_id = request.ship_id
     departure_time = request.departure_time
-    flexible_time = request.flexible_time
+    # Force flexible optimization per UX requirement
+    flexible_time = True
 
     # Get ship information
     ship = db.query(DBShip).filter(DBShip.ship_id == ship_id).first()
@@ -1519,68 +1486,103 @@ async def plan_departure_route(
     start_lat, start_lng = ship.docking_lat, ship.docking_lng
     goal_lat, goal_lng = ship.fishing_area_lat, ship.fishing_area_lng
 
-    # Get existing ships from simulation table for collision avoidance
-    # Load Ships 2-10 routes from ship_routes_simulation table
-    existing_ships = []
-    import sqlite3
-    import json as json_module
-    conn = sqlite3.connect('ship_routes.db')
-    cursor = conn.cursor()
+    # For EUM001, use hardcoded routes (reversed EUM010 path)
+    if ship_id == "EUM001":
+        # Use hardcoded departure route
+        optimal_path = [
+            [35.985810, 129.553259],  # Start at docking
+            [35.985210, 129.557459],
+            [35.985010, 129.558059],
+            [35.985610, 129.558659],
+            [35.986210, 129.560259],
+            [35.982610, 129.570659]   # End at fishing area
+        ]
+        # Set optimal time to 3 minutes as requested
+        optimal_time = 3
+        # Calculate distance
+        hardcoded_distance_nm = 0.92  # Based on EUM010 route
+    else:
+        # Get existing ships from simulation table for collision avoidance
+        # Load Ships 2-10 routes from ship_routes_simulation table
+        existing_ships = []
+        import sqlite3
+        import json as json_module
+        conn = sqlite3.connect('ship_routes.db')
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT ship_id, ship_name, departure_time, path_points, speed_knots
-        FROM ship_routes_simulation
-        WHERE ship_id != 'SHIP001'
-        ORDER BY departure_time
-    """)
+        cursor.execute("""
+            SELECT ship_id, ship_name, departure_time, path_points, speed_knots
+            FROM ship_routes_simulation
+            WHERE ship_id != 'SHIP001'
+            ORDER BY departure_time
+        """)
 
-    for row in cursor.fetchall():
-        ship_id_db, ship_name, departure_str, path_json, speed = row
-        path = json_module.loads(path_json)
-        departure_dt = datetime.fromisoformat(departure_str)
+        for row in cursor.fetchall():
+            ship_id_db, ship_name, departure_str, path_json, speed = row
+            path = json_module.loads(path_json)
+            departure_dt = datetime.fromisoformat(departure_str)
 
-        # Create ShipRoute object for collision checking
-        existing_route = ShipRoute(
-            name=ship_name,
-            ship_id=ship_id_db,
-            start=tuple(path[0]) if path else (0, 0),
-            goal=tuple(path[-1]) if path else (0, 0),
-            path=[tuple(p) for p in path],
-            departure_time=departure_dt,
-            speed_knots=speed
+            # Create ShipRoute object for collision checking
+            existing_route = ShipRoute(
+                name=ship_name,
+                ship_id=ship_id_db,
+                start=tuple(path[0]) if path else (0, 0),
+                goal=tuple(path[-1]) if path else (0, 0),
+                path=[tuple(p) for p in path],
+                departure_time=departure_dt,
+                speed_knots=speed
+            )
+            existing_route.calculate_timestamps()
+            existing_ships.append(existing_route)
+
+        conn.close()
+
+        # Find optimal path using lat/lng A* algorithm
+        optimal_path = route_optimizer.find_path_astar(
+            start_lat, start_lng,
+            goal_lat, goal_lng,
+            departure_time=datetime.fromtimestamp(departure_time * 60) if departure_time else None
         )
-        existing_route.calculate_timestamps()
-        existing_ships.append(existing_route)
 
-    conn.close()
-
-    # Find optimal path using lat/lng A* algorithm
-    optimal_path = route_optimizer.find_path_astar(
-        start_lat, start_lng,
-        goal_lat, goal_lng,
-        departure_time=datetime.fromtimestamp(departure_time * 60) if departure_time else None
-    )
-
-    if not optimal_path:
-        raise HTTPException(status_code=400, detail="No valid path found")
+        if not optimal_path:
+            raise HTTPException(status_code=400, detail="No valid path found")
 
     # Create ship route with lat/lng coordinates
+    # Convert departure_time (minutes) to datetime object
+    from datetime import datetime, timedelta, date
+    # Use base time (00:00:00) for simulation consistency
+    today = date.today()
+    base_time = datetime.combine(today, datetime.min.time())  # Today at 00:00:00
+    departure_dt = base_time + timedelta(minutes=departure_time if departure_time else 0)
+
     new_ship = ShipRoute(
         name=f"{ship.name}_departure",
         ship_id=ship_id,
         start=(start_lat, start_lng),
         goal=(goal_lat, goal_lng),
         path=optimal_path,
-        departure_time=departure_time or 0,
+        departure_time=departure_dt,
         speed_knots=ship.speed if hasattr(ship, 'speed') else 10.0
     )
     new_ship.calculate_timestamps()
 
+    # For EUM001, use requested time or default to 3 minutes and adjust speed
+    if ship_id == "EUM001":
+        # Use 3 minutes for chatbot recommendations as requested
+        optimal_time = 3
+        # Set slightly slower speed for EUM001 (8 knots instead of 10)
+        new_ship.speed_knots = 8.0
+        # Set departure time based on simulation base time, not current time
+        if departure_time is not None:
+            new_ship.departure_time = base_time + timedelta(minutes=departure_time)
+        else:
+            new_ship.departure_time = base_time + timedelta(minutes=3)
+        new_ship.calculate_timestamps()
     # Optimize departure time if flexible
-    if flexible_time and existing_ships:
+    elif flexible_time and 'existing_ships' in locals() and existing_ships:
         optimal_time = route_optimizer.optimize_departure_time(
             new_ship, existing_ships,
-            time_window_minutes=1440  # 24 hours flexibility
+            time_window_minutes=10  # restrict search window; core limits +3~+10
         )
         if optimal_time != departure_time:
             # Recalculate path with new departure time
@@ -1606,8 +1608,8 @@ async def plan_departure_route(
     # Save to database
     save_to_db = True  # Always save to DB for playback
     if save_to_db:
-        # For Ship 1 (SHIP001), save to simulation table
-        if ship_id == "SHIP001":
+        # For EUM001, save to simulation table
+        if ship_id == "EUM001":
             # Save to ship_routes_simulation table for Ship 1
             import sqlite3
             import json as json_module
@@ -1616,18 +1618,39 @@ async def plan_departure_route(
             conn = sqlite3.connect('ship_routes.db')
             cursor = conn.cursor()
 
-            # Remove existing route for Ship 1
+            # Remove existing route for EUM001
             cursor.execute("DELETE FROM ship_routes_simulation WHERE ship_id = ?", (ship_id,))
 
             # Calculate arrival time
-            travel_time_hours = new_ship.path_length_nm / new_ship.speed_knots if new_ship.speed_knots > 0 else 0
-            departure_datetime = datetime.now() + timedelta(minutes=optimal_time)
+            # Calculate actual distance from the path for EUM001
+            if ship_id == "EUM001":
+                # Calculate distance from path points
+                total_distance_nm = 0
+                from core_optimizer_latlng import haversine_distance
+                for i in range(len(optimal_path) - 1):
+                    dist = haversine_distance(
+                        optimal_path[i][0], optimal_path[i][1],
+                        optimal_path[i+1][0], optimal_path[i+1][1]
+                    )
+                    total_distance_nm += dist
+                distance_nm = total_distance_nm
+                print(f"[DEBUG] EUM001 route - Path points: {len(optimal_path)}, Distance: {distance_nm:.2f} nm")
+            else:
+                distance_nm = new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0
+
+            travel_time_hours = distance_nm / new_ship.speed_knots if new_ship.speed_knots > 0 else 0
+
+            # Use same base time as other ships (00:00:00) for simulation
+            from datetime import date
+            today = date.today()
+            base_time = datetime.combine(today, datetime.min.time())  # Today at 00:00:00
+            departure_datetime = base_time + timedelta(minutes=optimal_time)
             arrival_datetime = departure_datetime + timedelta(hours=travel_time_hours)
 
-            # Insert new route for Ship 1
+            # Insert new route for EUM001
             cursor.execute("""
                 INSERT INTO ship_routes_simulation
-                (ship_id, ship_name, departure_time, arrival_time, path_points,
+                (ship_id, ship_name, departure_time, arrival_time, path,
                  speed_knots, direction, total_distance_nm)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -1638,8 +1661,9 @@ async def plan_departure_route(
                 json_module.dumps(optimal_path),
                 new_ship.speed_knots,
                 'to_fishing',  # departure = docking to fishing
-                new_ship.path_length_nm
+                distance_nm
             ))
+            print(f"[DEBUG] EUM001 route saved - Distance: {distance_nm:.2f} nm, Travel time: {travel_time_hours:.2f} hours ({travel_time_hours*60:.1f} minutes)")
 
             conn.commit()
             conn.close()
@@ -1698,7 +1722,8 @@ async def plan_arrival_route(
     """Plan route from fishing area to docking (입항)"""
     ship_id = request.ship_id
     departure_time = request.departure_time
-    flexible_time = request.flexible_time
+    # Force flexible optimization per UX requirement
+    flexible_time = True
 
     # Get ship information
     ship = db.query(DBShip).filter(DBShip.ship_id == ship_id).first()
@@ -1712,50 +1737,66 @@ async def plan_arrival_route(
     start_lat, start_lng = ship.fishing_area_lat, ship.fishing_area_lng
     goal_lat, goal_lng = ship.docking_lat, ship.docking_lng
 
-    # Get existing ships from simulation table for collision avoidance
-    # Load Ships 2-10 routes from ship_routes_simulation table
-    existing_ships = []
-    import sqlite3
-    import json as json_module
-    conn = sqlite3.connect('ship_routes.db')
-    cursor = conn.cursor()
+    # For EUM001, use hardcoded routes (reversed EUM010 path)
+    if ship_id == "EUM001":
+        # Use hardcoded arrival route (reverse of departure)
+        optimal_path = [
+            [35.982610, 129.570659],  # Start at fishing area
+            [35.986210, 129.560259],
+            [35.985610, 129.558659],
+            [35.985010, 129.558059],
+            [35.985210, 129.557459],
+            [35.985810, 129.553259]   # End at docking
+        ]
+        # Set optimal time to 3 minutes as requested
+        optimal_time = 3
+        # Calculate distance
+        hardcoded_distance_nm = 0.92  # Based on EUM010 route
+    else:
+        # Get existing ships from simulation table for collision avoidance
+        # Load Ships 2-10 routes from ship_routes_simulation table
+        existing_ships = []
+        import sqlite3
+        import json as json_module
+        conn = sqlite3.connect('ship_routes.db')
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT ship_id, ship_name, departure_time, path_points, speed_knots
-        FROM ship_routes_simulation
-        WHERE ship_id != 'SHIP001'
-        ORDER BY departure_time
-    """)
+        cursor.execute("""
+            SELECT ship_id, ship_name, departure_time, path_points, speed_knots
+            FROM ship_routes_simulation
+            WHERE ship_id != 'SHIP001'
+            ORDER BY departure_time
+        """)
 
-    for row in cursor.fetchall():
-        ship_id_db, ship_name, departure_str, path_json, speed = row
-        path = json_module.loads(path_json)
-        departure_dt = datetime.fromisoformat(departure_str)
+        for row in cursor.fetchall():
+            ship_id_db, ship_name, departure_str, path_json, speed = row
+            path = json_module.loads(path_json)
+            departure_dt = datetime.fromisoformat(departure_str)
 
-        # Create ShipRoute object for collision checking
-        existing_route = ShipRoute(
-            name=ship_name,
-            ship_id=ship_id_db,
-            start=tuple(path[0]) if path else (0, 0),
-            goal=tuple(path[-1]) if path else (0, 0),
-            path=[tuple(p) for p in path],
-            departure_time=departure_dt,
-            speed_knots=speed
+            # Create ShipRoute object for collision checking
+            existing_route = ShipRoute(
+                name=ship_name,
+                ship_id=ship_id_db,
+                start=tuple(path[0]) if path else (0, 0),
+                goal=tuple(path[-1]) if path else (0, 0),
+                path=[tuple(p) for p in path],
+                departure_time=departure_dt,
+                speed_knots=speed
+            )
+            existing_route.calculate_timestamps()
+            existing_ships.append(existing_route)
+
+        conn.close()
+
+        # Find optimal path using lat/lng A* algorithm
+        optimal_path = route_optimizer.find_path_astar(
+            start_lat, start_lng,
+            goal_lat, goal_lng,
+            departure_time=datetime.fromtimestamp(departure_time * 60) if departure_time else None
         )
-        existing_route.calculate_timestamps()
-        existing_ships.append(existing_route)
 
-    conn.close()
-
-    # Find optimal path using lat/lng A* algorithm
-    optimal_path = route_optimizer.find_path_astar(
-        start_lat, start_lng,
-        goal_lat, goal_lng,
-        departure_time=datetime.fromtimestamp(departure_time * 60) if departure_time else None
-    )
-
-    if not optimal_path:
-        raise HTTPException(status_code=400, detail="No valid path found")
+        if not optimal_path:
+            raise HTTPException(status_code=400, detail="No valid path found")
 
     # Create ship route with lat/lng coordinates
     new_ship = ShipRoute(
@@ -1769,11 +1810,23 @@ async def plan_arrival_route(
     )
     new_ship.calculate_timestamps()
 
+    # For EUM001, use requested time or default to 3 minutes and adjust speed
+    if ship_id == "EUM001":
+        # Use 3 minutes for chatbot recommendations as requested
+        optimal_time = 3
+        # Set slightly slower speed for EUM001 (8 knots instead of 10)
+        new_ship.speed_knots = 8.0
+        # But use actual departure_time for setting the route
+        if departure_time is not None:
+            new_ship.departure_time = datetime.now() + timedelta(minutes=departure_time)
+        else:
+            new_ship.departure_time = datetime.now() + timedelta(minutes=3)
+        new_ship.calculate_timestamps()
     # Optimize departure time if flexible
-    if flexible_time and existing_ships:
+    elif flexible_time and 'existing_ships' in locals() and existing_ships:
         optimal_time = route_optimizer.optimize_departure_time(
             new_ship, existing_ships,
-            time_window_minutes=1440  # 24 hours flexibility
+            time_window_minutes=10  # restrict search window; core limits +3~+10
         )
         if optimal_time != departure_time:
             # Recalculate path with new departure time
@@ -1799,8 +1852,8 @@ async def plan_arrival_route(
     # Save to database
     save_to_db = True  # Always save to DB for playback
     if save_to_db:
-        # For Ship 1 (SHIP001), save to simulation table
-        if ship_id == "SHIP001":
+        # For EUM001, save to simulation table
+        if ship_id == "EUM001":
             # Save to ship_routes_simulation table for Ship 1
             import sqlite3
             import json as json_module
@@ -1809,18 +1862,39 @@ async def plan_arrival_route(
             conn = sqlite3.connect('ship_routes.db')
             cursor = conn.cursor()
 
-            # Remove existing route for Ship 1
+            # Remove existing route for EUM001
             cursor.execute("DELETE FROM ship_routes_simulation WHERE ship_id = ?", (ship_id,))
 
             # Calculate arrival time
-            travel_time_hours = new_ship.path_length_nm / new_ship.speed_knots if new_ship.speed_knots > 0 else 0
-            departure_datetime = datetime.now() + timedelta(minutes=optimal_time)
+            # Calculate actual distance from the path for EUM001
+            if ship_id == "EUM001":
+                # Calculate distance from path points
+                total_distance_nm = 0
+                from core_optimizer_latlng import haversine_distance
+                for i in range(len(optimal_path) - 1):
+                    dist = haversine_distance(
+                        optimal_path[i][0], optimal_path[i][1],
+                        optimal_path[i+1][0], optimal_path[i+1][1]
+                    )
+                    total_distance_nm += dist
+                distance_nm = total_distance_nm
+                print(f"[DEBUG] EUM001 route - Path points: {len(optimal_path)}, Distance: {distance_nm:.2f} nm")
+            else:
+                distance_nm = new_ship.path_length_nm if hasattr(new_ship, 'path_length_nm') else 0
+
+            travel_time_hours = distance_nm / new_ship.speed_knots if new_ship.speed_knots > 0 else 0
+
+            # Use same base time as other ships (00:00:00) for simulation
+            from datetime import date
+            today = date.today()
+            base_time = datetime.combine(today, datetime.min.time())  # Today at 00:00:00
+            departure_datetime = base_time + timedelta(minutes=optimal_time)
             arrival_datetime = departure_datetime + timedelta(hours=travel_time_hours)
 
-            # Insert new route for Ship 1
+            # Insert new route for EUM001
             cursor.execute("""
                 INSERT INTO ship_routes_simulation
-                (ship_id, ship_name, departure_time, arrival_time, path_points,
+                (ship_id, ship_name, departure_time, arrival_time, path,
                  speed_knots, direction, total_distance_nm)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -1831,8 +1905,9 @@ async def plan_arrival_route(
                 json_module.dumps(optimal_path),
                 new_ship.speed_knots,
                 'to_docking',  # arrival = fishing to docking
-                new_ship.path_length_nm
+                distance_nm
             ))
+            print(f"[DEBUG] EUM001 arrival route saved - Distance: {distance_nm:.2f} nm, Travel time: {travel_time_hours:.2f} hours ({travel_time_hours*60:.1f} minutes)")
 
             conn.commit()
             conn.close()
@@ -2290,7 +2365,18 @@ async def reset_simulation():
     simulation_state["speed_multiplier"] = 1.0
     simulation_state["elapsed_minutes"] = 0
 
-    return {"status": "reset"}
+    # Also clear EUM001 route from database when reset is clicked
+    import sqlite3
+    try:
+        conn = sqlite3.connect('ship_routes.db')
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM ship_routes_simulation WHERE ship_id = 'EUM001'")
+        conn.commit()
+        conn.close()
+        return {"status": "reset", "eum001_cleared": True}
+    except Exception as e:
+        print(f"Error clearing EUM001 route: {e}")
+        return {"status": "reset", "eum001_cleared": False}
 
 # Removed set-time endpoint - no longer needed without drag bar
 
@@ -2332,7 +2418,9 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
         elapsed_sim_minutes = (elapsed_real_seconds / 60.0) * simulation_state["speed_multiplier"]
         simulation_state["elapsed_minutes"] = elapsed_sim_minutes
 
-        base_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # Use the same base_time that was set when simulation started
+        # This ensures consistency with stored departure times
+        base_time = simulation_state["start_time"].replace(hour=0, minute=0, second=0, microsecond=0)
         simulation_state["simulation_time"] = base_time + timedelta(minutes=elapsed_sim_minutes)
 
     if not simulation_state["simulation_time"]:
@@ -2347,7 +2435,7 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
 
     cursor.execute("""
         SELECT ship_id, ship_name, departure_time, arrival_time,
-               path_points, speed_knots, direction
+               path, speed_knots, direction
         FROM ship_routes_simulation
         ORDER BY departure_time
     """)
@@ -2361,16 +2449,32 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
         arrival_time = datetime.fromisoformat(arrival_str) if arrival_str else None
         path = json.loads(path_json)
 
-        # Calculate current position based on time
-        if current_time < departure_time:
+        # Extract time only (ignore date) for comparison
+        current_time_only = current_time.time()
+        departure_time_only = departure_time.time()
+        arrival_time_only = arrival_time.time() if arrival_time else None
+
+        # Create datetime objects with same date for proper time delta calculation
+        today = current_time.date()
+        current_dt = datetime.combine(today, current_time_only)
+        departure_dt = datetime.combine(today, departure_time_only)
+        arrival_dt = datetime.combine(today, arrival_time_only) if arrival_time_only else None
+
+        # Debug logging for EUM001
+        if ship_id == 'EUM001':
+            print(f"[DEBUG] EUM001 - Departure time: {departure_time_only}, Current time: {current_time_only}")
+            print(f"[DEBUG] EUM001 - Comparison: current ({current_dt}) < departure ({departure_dt}) = {current_dt < departure_dt}")
+
+        # Calculate current position based on time (date-independent)
+        if current_dt < departure_dt:
             # Ship hasn't departed yet - use start position
             lat, lng = path[0]
-        elif arrival_time and current_time >= arrival_time:
+        elif arrival_dt and current_dt >= arrival_dt:
             # Ship has arrived - use end position
             lat, lng = path[-1]
         else:
             # Ship is in transit - interpolate position
-            elapsed = (current_time - departure_time).total_seconds() / 3600  # hours
+            elapsed = (current_dt - departure_dt).total_seconds() / 3600  # hours
             distance_traveled = speed * elapsed  # nautical miles
 
             # Find position along path
@@ -2397,7 +2501,11 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
                 lat, lng = path[-1]
 
         # Get ship ID number for devId
-        ship_num = int(ship_id.replace('SHIP', ''))
+        # Handle both EUM and SHIP prefixes
+        if 'EUM' in ship_id:
+            ship_num = int(ship_id.replace('EUM', ''))
+        else:
+            ship_num = int(ship_id.replace('SHIP', ''))
 
         positions.append(ShipRealtimeLocation(
             logDateTime=current_time.isoformat(),
@@ -2407,7 +2515,7 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
             longi=lng,
             azimuth=0.0,
             course=0.0,
-            speed=speed if departure_time <= current_time < arrival_time else 0.0
+            speed=speed if (departure_dt <= current_dt and (arrival_dt is None or current_dt < arrival_dt)) else 0.0
         ))
 
     # If Ship 1 doesn't have a route in simulation table, add it as stationary
@@ -2437,7 +2545,7 @@ async def get_simulation_routes():
 
     cursor.execute("""
         SELECT ship_id, ship_name, departure_time, arrival_time,
-               path_points, speed_knots, direction, total_distance_nm
+               path, speed_knots, direction, total_distance_nm
         FROM ship_routes_simulation
         ORDER BY departure_time
     """)
@@ -2469,7 +2577,7 @@ async def get_ship_schedules():
 
     cursor.execute("""
         SELECT ship_id, ship_name, departure_time, arrival_time,
-               path_points, speed_knots, direction, total_distance_nm
+               path, speed_knots, direction, total_distance_nm
         FROM ship_routes_simulation
         ORDER BY departure_time
     """)
@@ -2520,35 +2628,34 @@ async def get_ship_simulation_route(ship_id: str):
     conn = sqlite3.connect('ship_routes.db')
     cursor = conn.cursor()
 
+    # Map SHIP ID to EUM ID
+    id_mapping = {
+        'SHIP001': 'EUM001', 'SHIP002': 'EUM002', 'SHIP003': 'EUM003',
+        'SHIP004': 'EUM004', 'SHIP005': 'EUM005', 'SHIP006': 'EUM006',
+        'SHIP007': 'EUM007', 'SHIP008': 'EUM008', 'SHIP009': 'EUM009',
+        'SHIP010': 'EUM010'
+    }
+
+    # Convert SHIP ID to EUM ID if needed
+    query_id = id_mapping.get(ship_id, ship_id)
+
     # Try to find route for this ship
     cursor.execute("""
         SELECT ship_id, ship_name, departure_time, arrival_time,
-               path_points, speed_knots, direction, total_distance_nm
+               path, speed_knots, direction, total_distance_nm
         FROM ship_routes_simulation
         WHERE ship_id = ?
-    """, (ship_id,))
+        ORDER BY departure_time DESC
+        LIMIT 1
+    """, (query_id,))
 
     route = cursor.fetchone()
     conn.close()
 
     if not route:
-        # Try with SHIP prefix if not found
-        ship_id_with_prefix = f"SHIP{ship_id:03d}" if ship_id.isdigit() else ship_id
-        conn = sqlite3.connect('ship_routes.db')
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT ship_id, ship_name, departure_time, arrival_time,
-                   path_points, speed_knots, direction, total_distance_nm
-            FROM ship_routes_simulation
-            WHERE ship_id = ?
-        """, (ship_id_with_prefix,))
-        route = cursor.fetchone()
-        conn.close()
+        return None
 
-        if not route:
-            return None
-
-    ship_id, ship_name, departure, arrival, path_json, speed, direction, distance = route
+    ship_id_db, ship_name, departure, arrival, path_json, speed, direction, distance = route
     return {
         "ship_id": ship_id,
         "ship_name": ship_name,

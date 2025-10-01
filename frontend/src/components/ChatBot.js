@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import axios from 'axios';
 import './ChatBot.css';
 import {
   RecommendDepartureModal,
@@ -13,6 +14,8 @@ import {
   ReceiveMessagesModal,
   SendMessageModal
 } from './FunctionModals';
+
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:8000';
 
 const ChatBot = () => {
   const navigate = useNavigate();
@@ -29,6 +32,11 @@ const ChatBot = () => {
   const [ships, setShips] = useState([]);
   const [shipInfo, setShipInfo] = useState(null);
   const [showShipInfo, setShowShipInfo] = useState(false);
+  const [messageNotification, setMessageNotification] = useState(null);
+  const [showMessageNotification, setShowMessageNotification] = useState(false);
+  const [collisionWarnings, setCollisionWarnings] = useState([]); // Store collision warnings
+  const [showCollisionWarning, setShowCollisionWarning] = useState(false);
+  const [warnedShips, setWarnedShips] = useState(new Set()); // Track ships that have been warned
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const audioContextRef = useRef(null);
@@ -36,6 +44,7 @@ const ChatBot = () => {
   const micStreamRef = useRef(null);
   const animationRef = useRef(null);
   const recognitionRef = useRef(null);
+  const stopRequestedRef = useRef(false);
   const silenceTimerRef = useRef(null);
   const maxDurationTimerRef = useRef(null);
   const MAX_RECORDING_MS = 6000; // hard cap to avoid endless listening due to background noise
@@ -57,7 +66,7 @@ const ChatBot = () => {
 
   const fetchShips = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/api/eum/ships`);
+      const response = await fetch(`${API_BASE}/api/eum/ships`);
       if (response.ok) {
         const shipsData = await response.json();
         setShips(shipsData);
@@ -146,11 +155,11 @@ const ChatBot = () => {
 
       recognitionRef.current.onend = () => {
         console.log('Speech recognition ended');
-        // Restart if still recording (for continuous recognition)
-        if (mediaRecorderRef.current?.state === 'recording') {
+        // Restart only if actively recording and not stopping intentionally
+        if (!stopRequestedRef.current && mediaRecorderRef.current?.state === 'recording') {
           try {
             setTimeout(() => {
-              if (mediaRecorderRef.current?.state === 'recording') {
+              if (!stopRequestedRef.current && mediaRecorderRef.current?.state === 'recording') {
                 recognitionRef.current.start();
                 console.log('Restarting speech recognition...');
               }
@@ -278,6 +287,7 @@ const ChatBot = () => {
 
   const startRecording = async () => {
     try {
+      stopRequestedRef.current = false;
       setTranscript('');
       setResponse('');
       setIsRecording(true);
@@ -317,17 +327,14 @@ const ChatBot = () => {
       mediaRecorder.start();
 
       // Hard stop after MAX_RECORDING_MS to avoid endless recording with background music
+      // Force stop after 6 seconds regardless of noise
       if (maxDurationTimerRef.current) {
         clearTimeout(maxDurationTimerRef.current);
         maxDurationTimerRef.current = null;
       }
       maxDurationTimerRef.current = setTimeout(() => {
-        try {
-          console.log(`Max recording duration reached (${MAX_RECORDING_MS}ms). Auto-stopping.`);
-          stopRecording();
-        } catch (e) {
-          console.warn('Failed to stop after max duration:', e);
-        }
+        console.log(`Max recording duration reached (${MAX_RECORDING_MS}ms). Force stopping.`);
+        stopRecording(true);
       }, MAX_RECORDING_MS);
     } catch (error) {
       console.error('음성 녹음 시작 실패:', error);
@@ -336,7 +343,7 @@ const ChatBot = () => {
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = (isTimeout = false) => {
     // Prevent duplicate calls
     if (!isRecording) {
       console.log('Already stopped, ignoring duplicate call');
@@ -344,6 +351,7 @@ const ChatBot = () => {
     }
 
     setIsRecording(false);
+    stopRequestedRef.current = true;
 
     if (recognitionRef.current) {
       try {
@@ -354,9 +362,13 @@ const ChatBot = () => {
     }
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        console.warn('MediaRecorder stop failed:', e);
+      }
     }
+    mediaRecorderRef.current = null;
 
     // Clear silence timer to prevent duplicate calls
     if (silenceTimerRef.current) {
@@ -378,13 +390,28 @@ const ChatBot = () => {
     // Process transcript immediately when stop is called
     setTranscript((currentTranscript) => {
       console.log('Processing final transcript on stop:', currentTranscript);
-      if (currentTranscript && currentTranscript.trim()) {
-        // Process the transcript only once here
-        processTranscript(currentTranscript.trim());
+
+      if (isTimeout) {
+        // For timeout case, process whatever we have or show timeout message
+        if (currentTranscript && currentTranscript.trim()) {
+          // Process the partial transcript with timeout indication
+          setResponse('6초 제한 시간이 초과되었습니다. 녹음된 내용을 처리합니다...');
+          processTranscript(currentTranscript.trim());
+        } else {
+          // No transcript captured, show timeout message
+          setResponse('6초 제한 시간이 초과되었습니다. 음성이 감지되지 않았습니다. 다시 시도해주세요.');
+          setIsProcessing(false);
+        }
       } else {
-        console.log('No transcript to process');
-        setIsProcessing(false);
+        // Normal stop (user button or silence detection)
+        if (currentTranscript && currentTranscript.trim()) {
+          processTranscript(currentTranscript.trim());
+        } else {
+          console.log('No transcript to process');
+          setIsProcessing(false);
+        }
       }
+
       return currentTranscript; // Keep the transcript displayed
     });
   };
@@ -414,11 +441,40 @@ const ChatBot = () => {
       if (response.ok) {
         const data = await response.json();
         console.log('Server response data:', data);
-        setResponse(data.response || '응답을 생성할 수 없습니다.');
+        console.log('Function received:', data.function);
+        console.log('Parameters received:', data.parameters);
+
+        // Check if response has the expected format
+        if (!data.response && !data.message) {
+          console.error('No response or message in data:', data);
+          setResponse('응답을 생성할 수 없습니다.');
+        } else {
+          setResponse(data.response || data.message || '응답을 생성할 수 없습니다.');
+        }
 
         // Handle function-based responses
         if (data.function && data.function !== 'unknown') {
-          setModalParameters({ ...data.parameters, shipId: selectedShip });
+          console.log('Processing function:', data.function);
+          // Pass all data from backend including calculated routes
+          const modalParams = {
+            ...data.parameters,
+            shipId: selectedShip
+          };
+
+          // If backend already calculated a route, pass it to modal
+          if (data.optimal_route) {
+            modalParams.precalculatedRoute = data.optimal_route;
+            modalParams.routeSource = 'optimal';
+          } else if (data.route_data) {
+            modalParams.precalculatedRoute = data.route_data;
+            modalParams.routeSource = 'user_time';
+          }
+
+          if (data.needs_confirmation !== undefined) {
+            modalParams.needsConfirmation = data.needs_confirmation;
+          }
+
+          setModalParameters(modalParams);
           // Small delay to show response before opening modal
           setTimeout(() => {
             setActiveModal(data.function);
@@ -472,10 +528,188 @@ const ChatBot = () => {
     return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Function to show message notification
+  const showNotification = (message) => {
+    setMessageNotification(message);
+    setShowMessageNotification(true);
+
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+      setShowMessageNotification(false);
+    }, 5000);
+  };
+
+  // Demo auto notification disabled per UX cleanup
+  useEffect(() => {
+    return () => {};
+  }, []);
+
+  // Set up global function for opening route modal from other components
+  useEffect(() => {
+    window.openRouteModal = (shipId) => {
+      setModalParameters({ shipId: shipId || selectedShip });
+      setActiveModal('show_route');
+    };
+
+    return () => {
+      delete window.openRouteModal;
+    };
+  }, [selectedShip]);
+
+  // Reset warned ships when selected ship changes
+  useEffect(() => {
+    setWarnedShips(new Set());
+    setCollisionWarnings([]);
+    setShowCollisionWarning(false);
+  }, [selectedShip]);
+
+  // Collision detection system - check for nearby ships
+  useEffect(() => {
+    if (!selectedShip) return;
+
+    const checkCollisionRisk = async () => {
+      try {
+        const response = await axios.get(`${API_BASE}/api/eum/ships/realtime/demo`);
+        const allShips = response.data;
+
+        // Convert selected ship ID to devId format
+        let myDevId;
+        if (selectedShip.startsWith('EUM')) {
+          const shipNumber = selectedShip.replace('EUM', '');
+          myDevId = parseInt(shipNumber, 10);
+        } else if (selectedShip.startsWith('SHIP')) {
+          const shipNumber = selectedShip.replace('SHIP', '');
+          myDevId = parseInt(shipNumber, 10);
+        } else if (selectedShip.startsWith('선박')) {
+          const shipNumber = selectedShip.replace('선박', '');
+          myDevId = parseInt(shipNumber, 10);
+        }
+
+        // Find my ship's position
+        const myShip = allShips.find(ship => ship.devId === myDevId);
+        if (!myShip) return;
+
+        // Calculate distances to other ships
+        const warnings = [];
+        const DANGER_DISTANCE_NM = 0.05; // 0.05 nautical miles danger zone (매우 타이트하게)
+        const WARNING_DISTANCE_NM = 0.1; // 0.1 nautical mile warning zone (매우 타이트하게)
+        const SAFE_DISTANCE_NM = 0.15; // 0.15 nautical miles - safe distance to reset warning
+
+        const newWarnings = [];
+        const shipsToRemoveFromWarned = [];
+
+        allShips.forEach(ship => {
+          if (ship.devId === myDevId) return; // Skip self
+
+          // Calculate distance using Haversine formula
+          const R = 3440.065; // Earth radius in nautical miles
+          const dLat = (ship.lati - myShip.lati) * Math.PI / 180;
+          const dLon = (ship.longi - myShip.longi) * Math.PI / 180;
+          const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(myShip.lati * Math.PI / 180) * Math.cos(ship.lati * Math.PI / 180) *
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const distance = R * c;
+
+          // Check if this ship has already been warned
+          const shipKey = `${myDevId}-${ship.devId}`;
+          const alreadyWarned = warnedShips.has(shipKey);
+
+          // If ship is now at safe distance, remove from warned list
+          if (distance > SAFE_DISTANCE_NM && alreadyWarned) {
+            shipsToRemoveFromWarned.push(shipKey);
+          } else if (distance < DANGER_DISTANCE_NM && !alreadyWarned) {
+            warnings.push({
+              shipId: ship.devId,
+              shipName: `선박${String(ship.devId).padStart(3, '0')}`,
+              distance: distance.toFixed(2),
+              level: 'danger',
+              shipKey: shipKey,
+              alreadyWarned: false
+            });
+            newWarnings.push(shipKey);
+          } else if (distance < WARNING_DISTANCE_NM && !alreadyWarned) {
+            warnings.push({
+              shipId: ship.devId,
+              shipName: `선박${String(ship.devId).padStart(3, '0')}`,
+              distance: distance.toFixed(2),
+              level: 'warning',
+              shipKey: shipKey,
+              alreadyWarned: false
+            });
+            newWarnings.push(shipKey);
+          }
+        });
+
+        // Remove ships that are now at safe distance from warned list
+        if (shipsToRemoveFromWarned.length > 0) {
+          setWarnedShips(prev => {
+            const newSet = new Set(prev);
+            shipsToRemoveFromWarned.forEach(key => newSet.delete(key));
+            return newSet;
+          });
+        }
+
+        // Sort by distance
+        warnings.sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance));
+
+        // Set collision warnings (these are only NEW warnings, not already warned)
+        setCollisionWarnings(warnings);
+
+        // Update warned ships set and show warning only if there are new warnings
+        if (newWarnings.length > 0) {
+          setWarnedShips(prev => {
+            const newSet = new Set(prev);
+            newWarnings.forEach(key => newSet.add(key));
+            return newSet;
+          });
+          setShowCollisionWarning(true);
+        }
+      } catch (error) {
+        console.error('Failed to check collision risk:', error);
+      }
+    };
+
+    // Check immediately and then every 5 seconds
+    checkCollisionRisk();
+    const interval = setInterval(checkCollisionRisk, 5000);
+
+    return () => clearInterval(interval);
+  }, [selectedShip, warnedShips]);
+
   return (
     <div className="chatbot-container">
-      {/* VTS Navigation Button */}
-      <Link to="/" className="vts-nav-button">
+      {/* VTS Navigation Button - Styled like Dashboard Chatbot Button */}
+      <Link
+        to="/"
+        style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          backgroundColor: 'white',
+          color: '#333',
+          padding: '12px 20px',
+          borderRadius: '25px',
+          textDecoration: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          fontSize: '14px',
+          fontWeight: '500',
+          zIndex: 1000,
+          transition: 'all 0.3s ease',
+          cursor: 'pointer'
+        }}
+        onMouseOver={(e) => {
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.2)';
+        }}
+        onMouseOut={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        }}
+      >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="3" width="7" height="7"></rect>
           <rect x="14" y="3" width="7" height="7"></rect>
@@ -508,18 +742,25 @@ const ChatBot = () => {
           <h4>{selectedShip}</h4>
           {shipInfo && (
             <div style={{ fontSize: '0.8rem', marginTop: '10px', color: '#333' }}>
-              <p>{shipInfo.name}</p>
-              <p>{shipInfo.type}</p>
+              <p>이름: {shipInfo.name}</p>
+              <p>유형: {shipInfo.type}</p>
+              <p>
+                크기: {
+                  shipInfo.length !== undefined && shipInfo.length !== null && !isNaN(parseFloat(shipInfo.length))
+                    ? parseFloat(shipInfo.length).toFixed(2)
+                    : 'N/A'
+                }m × {
+                  shipInfo.breath !== undefined && shipInfo.breath !== null && !isNaN(parseFloat(shipInfo.breath))
+                    ? parseFloat(shipInfo.breath).toFixed(2)
+                    : 'N/A'
+                }m
+              </p>
+              <p>모항: {shipInfo.pol || '구룡포항'}</p>
+              <p>총톤수: {shipInfo.gt !== undefined && shipInfo.gt !== null && !isNaN(parseFloat(shipInfo.gt)) ? parseFloat(shipInfo.gt).toFixed(2) : 'N/A'}톤</p>
             </div>
           )}
         </div>
 
-        <button
-          onClick={() => navigate('/')}
-          className="main-screen-btn"
-        >
-          메인 화면으로
-        </button>
       </div>
 
       {/* Phone Mockup */}
@@ -531,6 +772,163 @@ const ChatBot = () => {
             <div className="phone-indicators">
             </div>
           </div>
+
+          {/* Message Notification - Consistent Modal Style */}
+          {showMessageNotification && messageNotification && (
+            <>
+              {/* Backdrop */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: 'rgba(0, 0, 0, 0.6)',
+                  zIndex: 1999,
+                  backdropFilter: 'blur(5px)'
+                }}
+                onClick={() => setShowMessageNotification(false)}
+              />
+
+              {/* Notification Modal */}
+              <div
+                className="message-notification"
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  background: 'rgba(30, 30, 30, 0.9)',
+                  backdropFilter: 'blur(20px)',
+                  borderRadius: '20px',
+                  padding: '16px',
+                  boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
+                  zIndex: 2000,
+                  width: '90%',
+                  maxWidth: '320px',
+                  animation: 'fadeIn 0.3s ease',
+                  textAlign: 'left',
+                  border: '1px solid rgba(255, 255, 255, 0.1)'
+                }}
+              >
+                <div style={{ color: 'rgba(255, 255, 255, 0.85)', fontSize: '14px', marginBottom: '12px' }}>
+                  <div style={{ marginBottom: '6px' }}>{messageNotification.sender}</div>
+                  <div style={{ background: 'rgba(255, 255, 255, 0.08)', padding: '12px', borderRadius: '10px' }}>
+                    {messageNotification.message}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                  <button
+                    onClick={() => {
+                      setActiveModal('receive_messages');
+                      setShowMessageNotification(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
+                      color: 'white',
+                      border: '1px solid rgba(102, 126, 234, 0.5)',
+                      borderRadius: '12px',
+                      fontSize: '0.95rem',
+                      fontWeight: '500',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+                    }}
+                    onMouseOver={(e) => (
+                      e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%)',
+                      e.target.style.transform = 'translateY(-2px)',
+                      e.target.style.boxShadow = '0 5px 15px rgba(102, 126, 234, 0.3)'
+                    )}
+                    onMouseOut={(e) => (
+                      e.target.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%)',
+                      e.target.style.transform = 'translateY(0)',
+                      e.target.style.boxShadow = 'none'
+                    )}
+                  >
+                    열기
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Collision Warning Alert */}
+          {showCollisionWarning && collisionWarnings.length > 0 && (
+            <div style={{
+              position: 'absolute',
+              top: '80px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 2000,
+              animation: 'fadeIn 0.3s ease'
+            }}>
+              <div style={{
+                background: collisionWarnings[0].level === 'danger'
+                  ? 'rgba(255, 0, 0, 0.9)'
+                  : 'rgba(255, 165, 0, 0.9)',
+                borderRadius: '15px',
+                padding: '12px 20px',
+                backdropFilter: 'blur(10px)',
+                boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
+                border: '1px solid rgba(255, 255, 255, 0.3)',
+                minWidth: '250px',
+                textAlign: 'center'
+              }}>
+                <div style={{
+                  color: 'white',
+                  fontWeight: 'bold',
+                  fontSize: '14px',
+                  marginBottom: '8px'
+                }}>
+                  ⚠️ 충돌 위험 경고
+                </div>
+                {collisionWarnings.slice(0, 2).map((warning, index) => (
+                  <div key={index} style={{
+                    color: 'white',
+                    fontSize: '12px',
+                    marginTop: '4px',
+                    opacity: 0.95
+                  }}>
+                    {warning.shipName}와(과) {warning.distance}해리 거리
+                    {warning.level === 'danger' && ' (위험!)'}
+                  </div>
+                ))}
+                {collisionWarnings.length > 2 && (
+                  <div style={{
+                    color: 'white',
+                    fontSize: '11px',
+                    marginTop: '4px',
+                    opacity: 0.8
+                  }}>
+                    외 {collisionWarnings.length - 2}척 추가 경고
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    setShowCollisionWarning(false);
+                    // 확인 버튼을 누르면 현재 경고를 숨기지만, warnedShips는 유지
+                    // 이미 경고한 선박들은 다시 경고하지 않음
+                  }}
+                  style={{
+                    marginTop: '8px',
+                    padding: '4px 12px',
+                    background: 'rgba(255, 255, 255, 0.2)',
+                    border: '1px solid rgba(255, 255, 255, 0.4)',
+                    borderRadius: '8px',
+                    color: 'white',
+                    fontSize: '11px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  확인
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="phone-content">
             <div className="glass-background">
               <div className="liquid-blob blob-1"></div>
@@ -556,7 +954,7 @@ const ChatBot = () => {
               <button
                 className="voice-button"
                 onClick={handleVoiceButtonClick}
-                disabled={isProcessing || isRecording}
+                disabled={isProcessing}
               >
                 {isRecording ? (
                   <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
@@ -767,34 +1165,6 @@ const ChatBot = () => {
         </div>
       )}
 
-      {/* Toggle Button for Ship Info - Always Visible */}
-      {!showShipInfo && shipInfo && (
-        <button
-          onClick={() => setShowShipInfo(true)}
-          style={{
-            position: 'absolute',
-            bottom: '20px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(255, 255, 255, 0.9)',
-            backdropFilter: 'blur(10px)',
-            border: 'none',
-            borderRadius: '20px',
-            padding: '10px 20px',
-            fontSize: '0.9rem',
-            fontWeight: '500',
-            color: '#333',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-            cursor: 'pointer',
-            zIndex: 10,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-        >
-          선박 정보 보기
-        </button>
-      )}
     </div>
   </div>
 </div>
@@ -861,12 +1231,6 @@ const ChatBot = () => {
               정박 위치
             </button>
             <button
-              onClick={() => handleFeatureSelect('list_features')}
-              className="debug-button"
-            >
-              기능 목록
-            </button>
-            <button
               onClick={() => handleFeatureSelect('receive_messages')}
               className="debug-button"
             >
@@ -877,6 +1241,12 @@ const ChatBot = () => {
               className="debug-button"
             >
               메시지 전송
+            </button>
+            <button
+              onClick={() => handleFeatureSelect('list_features')}
+              className="debug-button"
+            >
+              기능 목록
             </button>
           </div>
         )}

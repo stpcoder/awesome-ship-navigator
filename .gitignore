@@ -26,6 +26,7 @@ env/
 
 # Database
 *.db
+!ship_routes.db
 *.sqlite3
 
 # Node
@@ -58,18 +59,17 @@ logs
 .coverage
 htmlcov/
 .pytest_cache/
-test_*.py
-*_test.py
 
-# Project specific
+# Project specific - temporary files only
 chatbot_TODO.md
 current_requirements.txt
 *.backup
-convert_obstacles.js
-old_versions/
-assets/images/
-docs/
-tests/
+project.tar.gz
+
+# Keep these files/folders (DO NOT ignore):
+# - docs/ (documentation is important)
+# - tests/ (tests should be in repo)
+# - assets/ (project assets)
 
 # Temporary files
 *.tmp

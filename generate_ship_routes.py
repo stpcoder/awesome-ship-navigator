@@ -121,15 +121,15 @@ def generate_routes(ships: List[dict], start_time: datetime):
     # Custom departure order with tight 5-minute intervals starting at 2 minutes
     # Compact schedule for rapid sequential departures
     ship_order_map = {
-        'SHIP002': {'order': 0, 'offset': 2},     # First ship: 2 minutes after start
-        'SHIP010': {'order': 1, 'offset': 7},     # Second ship: 7 minutes (5 min gap)
-        'SHIP003': {'order': 2, 'offset': 12},    # 12 minutes (5 min gap)
-        'SHIP009': {'order': 3, 'offset': 17},    # 17 minutes (5 min gap)
-        'SHIP005': {'order': 4, 'offset': 22},    # 22 minutes (5 min gap)
-        'SHIP007': {'order': 5, 'offset': 27},    # 27 minutes (5 min gap)
-        'SHIP004': {'order': 6, 'offset': 32},    # 32 minutes (5 min gap)
-        'SHIP006': {'order': 7, 'offset': 37},    # 37 minutes (5 min gap)
-        'SHIP008': {'order': 8, 'offset': 42},    # 42 minutes (5 min gap)
+        'EUM002': {'order': 0, 'offset': 2},     # First ship: 2 minutes after start
+        'EUM010': {'order': 1, 'offset': 7},     # Second ship: 7 minutes (5 min gap)
+        'EUM003': {'order': 2, 'offset': 12},    # 12 minutes (5 min gap)
+        'EUM009': {'order': 3, 'offset': 17},    # 17 minutes (5 min gap)
+        'EUM005': {'order': 4, 'offset': 22},    # 22 minutes (5 min gap)
+        'EUM007': {'order': 5, 'offset': 27},    # 27 minutes (5 min gap)
+        'EUM004': {'order': 6, 'offset': 32},    # 32 minutes (5 min gap)
+        'EUM006': {'order': 7, 'offset': 37},    # 37 minutes (5 min gap)
+        'EUM008': {'order': 8, 'offset': 42},    # 42 minutes (5 min gap)
     }
 
     # Sort ships by custom order
@@ -219,7 +219,7 @@ def save_routes_to_db(routes: List[dict], db_path: str):
             ship_name TEXT,
             departure_time TEXT,
             arrival_time TEXT,
-            path_points TEXT,  -- JSON array of [lat, lng] points
+            path TEXT,  -- JSON array of [lat, lng] points
             speed_knots REAL,
             direction TEXT,
             total_distance_nm REAL,
@@ -234,7 +234,7 @@ def save_routes_to_db(routes: List[dict], db_path: str):
     for route in routes:
         cursor.execute("""
             INSERT INTO ship_routes_simulation
-            (ship_id, ship_name, departure_time, arrival_time, path_points,
+            (ship_id, ship_name, departure_time, arrival_time, path,
              speed_knots, direction, total_distance_nm)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
