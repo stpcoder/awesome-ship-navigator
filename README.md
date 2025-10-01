@@ -19,7 +19,12 @@
 
 #### 데모 비디오 
 
-![영상 보러가기](https://youtu.be/ZPkliuqTGSc)
+[영상 보러가기](https://youtu.be/ZPkliuqTGSc)
+
+<!-- YouTube 임베드 (깃헙에서 미리보기는 안 되지만, 지원하는 뷰어에서는 보일 수 있음) -->
+<a href="https://youtu.be/ZPkliuqTGSc" target="_blank">
+  <img src="https://img.youtube.com/vi/ZPkliuqTGSc/0.jpg" alt="유튜브 썸네일" width="480"/>
+</a>
 
 #### 메인 대시보드
 ![대시보드 메인 화면](screenshots/desktop/dashboard-main.png)
