@@ -2,6 +2,25 @@
 
 실시간 선박 관리 및 항해 최적화 시스템
 
+## 📋 발표 자료
+
+### 📄 프로젝트 발표서
+**[선박_해커톤.pdf](선박_해커톤.pdf)** - 프로젝트 상세 발표 자료 다운로드
+
+### 🎥 데모 영상
+<div align="center">
+
+#### 🎬 프로젝트 데모 영상
+[![Ship Navigator Demo](https://img.youtube.com/vi/ZPkliuqTGSc/0.jpg)](https://youtu.be/ZPkliuqTGSc)
+
+**[▶️ 영상 보러가기](https://youtu.be/ZPkliuqTGSc)**
+
+*실시간 선박 관리 시스템의 주요 기능을 소개하는 데모 영상입니다.*
+
+</div>
+
+---
+
 ## 📋 목차
 - [스크린샷](#-스크린샷)
 - [빠른 실행](#-빠른-실행-가이드)
@@ -16,15 +35,6 @@
 ## 📸 스크린샷
 
 ### 💻 데스크톱 화면
-
-#### 데모 비디오 
-
-[영상 보러가기](https://youtu.be/ZPkliuqTGSc)
-
-<!-- YouTube 임베드 (깃헙에서 미리보기는 안 되지만, 지원하는 뷰어에서는 보일 수 있음) -->
-<a href="https://youtu.be/ZPkliuqTGSc" target="_blank">
-  <img src="https://img.youtube.com/vi/ZPkliuqTGSc/0.jpg" alt="유튜브 썸네일" width="480"/>
-</a>
 
 #### 메인 대시보드
 ![대시보드 메인 화면](screenshots/desktop/dashboard-main.png)
