@@ -51,6 +51,11 @@ frontend/.cache/
 .env
 .env.local
 
+# SSH Keys (Security)
+*.key
+*.key.pub
+ssh-key*
+
 # Logs
 logs
 *.log
