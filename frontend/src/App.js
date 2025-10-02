@@ -17,7 +17,7 @@ import ReportGenerator from './components/ReportGenerator';
 import obstaclesData from './data/obstacles_latlng.json';
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = '/api';
 
 function MainDashboard() {
   const [ships, setShips] = useState([]);
@@ -740,7 +740,7 @@ function MainDashboard() {
 
 function App() {
   return (
-    <Router>
+    <Router basename="/ship-navigator">
       <Routes>
         <Route path="/" element={<MainDashboard />} />
         <Route path="/chatbot" element={<ChatBot />} />
