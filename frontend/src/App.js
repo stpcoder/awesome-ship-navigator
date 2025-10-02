@@ -19,7 +19,7 @@ import axios from 'axios';
 
 // Environment-based configuration
 const API_BASE = process.env.NODE_ENV === 'production'
-  ? '/api'
+  ? ''  // Empty because endpoints already include /api
   : 'http://localhost:8000';
 
 function MainDashboard() {

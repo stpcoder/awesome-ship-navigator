@@ -1,19 +1,19 @@
 {
   "files": {
     "main.css": "/ship-navigator/static/css/main.fd6dc1cf.css",
-    "main.js": "/ship-navigator/static/js/main.3f12af3a.js",
+    "main.js": "/ship-navigator/static/js/main.e6b145ef.js",
     "static/js/239.37b44824.chunk.js": "/ship-navigator/static/js/239.37b44824.chunk.js",
     "static/js/977.e0a61454.chunk.js": "/ship-navigator/static/js/977.e0a61454.chunk.js",
     "static/js/455.189eb1cd.chunk.js": "/ship-navigator/static/js/455.189eb1cd.chunk.js",
     "index.html": "/ship-navigator/index.html",
     "main.fd6dc1cf.css.map": "/ship-navigator/static/css/main.fd6dc1cf.css.map",
-    "main.3f12af3a.js.map": "/ship-navigator/static/js/main.3f12af3a.js.map",
+    "main.e6b145ef.js.map": "/ship-navigator/static/js/main.e6b145ef.js.map",
     "239.37b44824.chunk.js.map": "/ship-navigator/static/js/239.37b44824.chunk.js.map",
     "977.e0a61454.chunk.js.map": "/ship-navigator/static/js/977.e0a61454.chunk.js.map",
     "455.189eb1cd.chunk.js.map": "/ship-navigator/static/js/455.189eb1cd.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.fd6dc1cf.css",
-    "static/js/main.3f12af3a.js"
+    "static/js/main.e6b145ef.js"
   ]
 }
