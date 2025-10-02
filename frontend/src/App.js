@@ -17,7 +17,10 @@ import ReportGenerator from './components/ReportGenerator';
 import obstaclesData from './data/obstacles_latlng.json';
 import axios from 'axios';
 
-const API_BASE = '/api';
+// Environment-based configuration
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? '/api'
+  : 'http://localhost:8000';
 
 function MainDashboard() {
   const [ships, setShips] = useState([]);
@@ -739,8 +742,10 @@ function MainDashboard() {
 }
 
 function App() {
+  const basename = process.env.NODE_ENV === 'production' ? '/ship-navigator' : '/';
+
   return (
-    <Router basename="/ship-navigator">
+    <Router basename={basename}>
       <Routes>
         <Route path="/" element={<MainDashboard />} />
         <Route path="/chatbot" element={<ChatBot />} />
