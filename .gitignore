@@ -76,3 +76,5 @@ project.tar.gz
 *.bak
 temp/
 tmp/
+# Allow frontend build for deployment
+!frontend/build/
