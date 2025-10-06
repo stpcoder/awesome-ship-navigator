@@ -263,9 +263,10 @@ def main():
     ships = get_ship_positions(db_path)
     logger.info(f"Found {len(ships)} ships to route")
 
-    # Set start time to a fixed base time (0 in simulation)
-    # This creates consistent demo data
-    start_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Set start time to a FIXED date (2000-01-01) at midnight
+    # Since we only use time (HH:MM:SS) in simulation, the date doesn't matter
+    # Using a fixed date ensures consistent behavior regardless of when routes are generated
+    start_time = datetime(2000, 1, 1, 0, 0, 0)
 
     # Generate routes
     routes = generate_routes(ships, start_time)

@@ -83,3 +83,4 @@ temp/
 tmp/
 # Allow frontend build for deployment
 !frontend/build/
+AI모델 제작.zip

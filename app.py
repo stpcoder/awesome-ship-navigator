@@ -2449,37 +2449,43 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
         arrival_time = datetime.fromisoformat(arrival_str) if arrival_str else None
         path = json.loads(path_json)
 
-        # Extract time only (ignore date) for comparison
+        # Extract ONLY time components (HH:MM:SS) - completely ignore dates
         current_time_only = current_time.time()
         departure_time_only = departure_time.time()
         arrival_time_only = arrival_time.time() if arrival_time else None
 
-        # Create datetime objects with same date for proper time delta calculation
-        today = current_time.date()
-        current_dt = datetime.combine(today, current_time_only)
-        departure_dt = datetime.combine(today, departure_time_only)
-        arrival_dt = datetime.combine(today, arrival_time_only) if arrival_time_only else None
+        # Convert time-only values to total seconds from midnight for comparison
+        def time_to_seconds(t):
+            return t.hour * 3600 + t.minute * 60 + t.second
+
+        current_seconds = time_to_seconds(current_time_only)
+        departure_seconds = time_to_seconds(departure_time_only)
+        arrival_seconds = time_to_seconds(arrival_time_only) if arrival_time_only else None
 
         # Debug logging for EUM001
         if ship_id == 'EUM001':
-            print(f"[DEBUG] EUM001 - Departure time: {departure_time_only}, Current time: {current_time_only}")
-            print(f"[DEBUG] EUM001 - Comparison: current ({current_dt}) < departure ({departure_dt}) = {current_dt < departure_dt}")
+            print(f"[DEBUG] EUM001 - Departure: {departure_time_only}, Current: {current_time_only}")
+            print(f"[DEBUG] EUM001 - Seconds - Current: {current_seconds}, Departure: {departure_seconds}")
 
-        # Calculate current position based on time (date-independent)
-        if current_dt < departure_dt:
+        # Calculate current position based on time-only (completely date-independent)
+        if current_seconds < departure_seconds:
             # Ship hasn't departed yet - use start position
             lat, lng = path[0]
-        elif arrival_dt and current_dt >= arrival_dt:
+            is_moving = False
+        elif arrival_seconds and current_seconds >= arrival_seconds:
             # Ship has arrived - use end position
             lat, lng = path[-1]
+            is_moving = False
         else:
             # Ship is in transit - interpolate position
-            elapsed = (current_dt - departure_dt).total_seconds() / 3600  # hours
-            distance_traveled = speed * elapsed  # nautical miles
+            elapsed_seconds = current_seconds - departure_seconds
+            elapsed_hours = elapsed_seconds / 3600.0
+            distance_traveled = speed * elapsed_hours  # nautical miles
 
             # Find position along path
             total_distance = 0
             lat, lng = path[0]
+            is_moving = True
 
             for i in range(len(path) - 1):
                 from core_optimizer_latlng import haversine_distance
@@ -2499,6 +2505,7 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
             else:
                 # Ship has reached the end
                 lat, lng = path[-1]
+                is_moving = False
 
         # Get ship ID number for devId
         # Handle both EUM and SHIP prefixes
@@ -2515,7 +2522,7 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
             longi=lng,
             azimuth=0.0,
             course=0.0,
-            speed=speed if (departure_dt <= current_dt and (arrival_dt is None or current_dt < arrival_dt)) else 0.0
+            speed=speed if is_moving else 0.0
         ))
 
     # If Ship 1 doesn't have a route in simulation table, add it as stationary
