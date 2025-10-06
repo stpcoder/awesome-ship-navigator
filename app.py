@@ -2335,11 +2335,12 @@ async def start_simulation(request: dict = {}):
         simulation_state["speed_multiplier"] = speed
         return {"status": "speed_updated", "speed_multiplier": speed}
 
-    # Start fresh simulation
-    base_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)  # Start at midnight (00:00)
+    # Start fresh simulation with FIXED date (2000-01-01) to match DB routes
+    # This ensures date-independent operation
+    base_time = datetime(2000, 1, 1, 0, 0, 0)  # Start at 2000-01-01 00:00:00
     simulation_state["is_running"] = True
     simulation_state["start_time"] = datetime.now()  # Real world start time
-    simulation_state["simulation_time"] = base_time  # Simulation world time
+    simulation_state["simulation_time"] = base_time  # Simulation world time (fixed date)
     simulation_state["speed_multiplier"] = speed
     simulation_state["elapsed_minutes"] = 0
 
@@ -2394,8 +2395,8 @@ async def get_simulation_status():
         elapsed_sim_minutes = (elapsed_real_seconds / 60.0) * simulation_state["speed_multiplier"]
         simulation_state["elapsed_minutes"] = elapsed_sim_minutes
 
-        # Update simulation time
-        base_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # Update simulation time with FIXED date (2000-01-01) to match DB routes
+        base_time = datetime(2000, 1, 1, 0, 0, 0)
         simulation_state["simulation_time"] = base_time + timedelta(minutes=elapsed_sim_minutes)
 
     return {
@@ -2418,9 +2419,9 @@ async def get_simulation_ship_positions(db: Session = Depends(get_db)):
         elapsed_sim_minutes = (elapsed_real_seconds / 60.0) * simulation_state["speed_multiplier"]
         simulation_state["elapsed_minutes"] = elapsed_sim_minutes
 
-        # Use the same base_time that was set when simulation started
-        # This ensures consistency with stored departure times
-        base_time = simulation_state["start_time"].replace(hour=0, minute=0, second=0, microsecond=0)
+        # Use FIXED base_time (2000-01-01) to match DB routes
+        # This ensures date-independent operation
+        base_time = datetime(2000, 1, 1, 0, 0, 0)
         simulation_state["simulation_time"] = base_time + timedelta(minutes=elapsed_sim_minutes)
 
     if not simulation_state["simulation_time"]:
