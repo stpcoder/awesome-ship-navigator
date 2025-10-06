@@ -4,7 +4,9 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import './FunctionModals.css';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? ''  // Empty because endpoints already include /api
+  : 'http://localhost:8000';
 
 // Set Mapbox access token
 mapboxgl.accessToken = process.env.REACT_APP_MAPBOX_TOKEN || 'pk.eyJ1IjoidGFlaG9qZSIsImEiOiJjbWZtYnZlbWowMDhlMnBvZXltZXdmbnJhIn0.qZ5M8WwEMUfIA9G42G3ztA';

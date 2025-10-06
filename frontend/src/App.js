@@ -180,7 +180,12 @@ function MainDashboard() {
       // If simulation is running, fetch from simulation endpoint
       if (isSimulationRunning) {
         const response = await axios.get(`${API_BASE}/api/simulation/ship-positions`);
-        console.log('Fetched simulation data:', response.data.length, 'ships');
+        console.log('✅ Fetched simulation data:', response.data.length, 'ships');
+        // Debug: Show Ship 2 position
+        const ship2 = response.data.find(s => s.devId === 2);
+        if (ship2) {
+          console.log('  Ship 2:', ship2.lati.toFixed(6), ship2.longi.toFixed(6), 'speed:', ship2.speed);
+        }
         setRealtimeData(response.data);
         return;
       }

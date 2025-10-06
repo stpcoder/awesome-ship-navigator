@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Pause, RotateCcw } from 'lucide-react';
 
+// Use environment-based API base URL
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? ''  // Empty because endpoints already include /api
+  : 'http://localhost:8000';
+
 const SimulationControl = ({ onSimulationStatusChange }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [simulationTime, setSimulationTime] = useState(null);
@@ -13,7 +18,7 @@ const SimulationControl = ({ onSimulationStatusChange }) => {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/simulation/status');
+        const response = await fetch(`${API_BASE}/api/simulation/status`);
         if (response.ok) {
           const data = await response.json();
           setIsPlaying(data.is_running);
@@ -46,7 +51,7 @@ const SimulationControl = ({ onSimulationStatusChange }) => {
     try {
       if (isPlaying) {
         // Pause simulation
-        const response = await fetch('http://localhost:8000/api/simulation/stop', {
+        const response = await fetch(`${API_BASE}/api/simulation/stop`, {
           method: 'POST',
         });
 
@@ -57,7 +62,7 @@ const SimulationControl = ({ onSimulationStatusChange }) => {
         }
       } else {
         // Start/Resume simulation
-        const response = await fetch('http://localhost:8000/api/simulation/start', {
+        const response = await fetch(`${API_BASE}/api/simulation/start`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -88,7 +93,7 @@ const SimulationControl = ({ onSimulationStatusChange }) => {
     if (isPlaying) {
       setIsLoading(true);
       try {
-        const response = await fetch('http://localhost:8000/api/simulation/start', {
+        const response = await fetch(`${API_BASE}/api/simulation/start`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -115,7 +120,7 @@ const SimulationControl = ({ onSimulationStatusChange }) => {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/simulation/reset', {
+      const response = await fetch(`${API_BASE}/api/simulation/reset`, {
         method: 'POST',
       });
 
